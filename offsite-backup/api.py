@@ -596,7 +596,6 @@ setInterval(loadLog, 30000);
 _API_ROUTES = (
     "/api/recovery/start", "/api/recovery/stop",
     "/api/status", "/api/options", "/api/log", "/api/backups", "/api/backup",
-    "/api/debug/env",
 )
 
 
@@ -641,10 +640,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 500)
             else:
                 self._json(data)
-        elif path == "/api/debug/env":
-            all_keys = sorted(os.environ.keys())
-            env_keys = sorted(k for k in os.environ if any(x in k.upper() for x in ("SUPERVISOR", "HASSIO", "TOKEN", "HA_")))
-            self._json({"all_env_keys": all_keys, "token_related_keys": env_keys, "supervisor_token_set": bool(os.environ.get("SUPERVISOR_TOKEN")), "hassio_token_set": bool(os.environ.get("HASSIO_TOKEN"))})
         else:
             self._json({"error": "Not found"}, 404)
 

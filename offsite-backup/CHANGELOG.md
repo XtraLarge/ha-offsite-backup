@@ -1,14 +1,9 @@
 # Changelog
 
-## 1.2.25 - 2026-05-27
-
-### Debug
-- `/api/debug/env` Endpunkt zum Diagnostizieren der Token-Injektion
-
-## 1.2.24 - 2026-05-27
+## 1.2.27 - 2026-05-27
 
 ### Behoben
-- `run.sh` prüft jetzt beide möglichen Token-Namen: `SUPERVISOR_TOKEN` und `HASSIO_TOKEN` (Fallback für ältere HA-Versionen)
+- `run.sh` Shebang auf `#!/usr/bin/with-contenv bash` geändert — s6-overlay v3 lädt Docker-Umgebungsvariablen (SUPERVISOR_TOKEN etc.) nur wenn `with-contenv` verwendet wird; ohne es waren keine Supervisor-Variablen im Prozess verfügbar
 
 ## 1.2.23 - 2026-05-27
 
