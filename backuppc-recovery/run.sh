@@ -103,6 +103,12 @@ cat > /etc/lighttpd/auth.conf << 'LHEOF'
 setenv.add-environment = ("REMOTE_USER" => "backuppc")
 LHEOF
 
+# Umgebungsvariablen die der adferrand-Entrypoint normalerweise setzt
+export BACKUPPC_USERNAME=backuppc
+export BACKUPPC_GROUPNAME=backuppc
+export BACKUPPC_UUID=1000
+export BACKUPPC_GUID=1000
+
 # MQTT-State-Publisher starten
 python3 /state.py &
 
