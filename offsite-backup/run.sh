@@ -46,5 +46,5 @@ grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
 
 # API starten
-env > /data/logs/env_debug.txt 2>&1 || true
+echo "=ENV= $(printenv | tr '\n' '|')"
 exec python3 /api.py
