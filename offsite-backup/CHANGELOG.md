@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.21 - 2026-05-27
+
+### Behoben
+- Port 8123 in HA-API-URL ergänzt (`http://homeassistant:8123/api/hassio/`) — Port 80 lieferte 404
+
 ## 1.2.20 - 2026-05-27
 
 ### Geändert
