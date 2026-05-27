@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.1.0"
+version: "1.2.0"
 slug: offsite_backup
 description: Offsite Backup via Hetzner Storage Box (rsync + ZFS Snapshot) mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -21,6 +21,10 @@ options:
   loki_url: ""
   recovery_target: "local"
   mqtt_discovery: true
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
   ssh_key_nas: ""
   ssh_key_hetzner: ""
   ssh_key_recovery: ""
@@ -37,6 +41,10 @@ schema:
   loki_url: str
   recovery_target: str
   mqtt_discovery: bool
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_user: str
+  mqtt_password: password
   ssh_key_nas: password
   ssh_key_hetzner: password
   ssh_key_recovery: password
