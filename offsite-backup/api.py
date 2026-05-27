@@ -547,15 +547,21 @@ setInterval(loadLog, 30000);
 """
 
 
+_API_ROUTES = (
+    "/api/recovery/start", "/api/recovery/stop",
+    "/api/status", "/api/options", "/api/log", "/api/backups", "/api/backup",
+)
+
+
 def _normalize_path(raw):
-    """Strip ingress prefix and extract the meaningful route segment."""
-    p = raw.split("?")[0]
+    p = raw.split("?")[0].rstrip("/")
     if INGRESS_PATH and p.startswith(INGRESS_PATH):
-        p = p[len(INGRESS_PATH):]
-    # If the ingress prefix was not stripped (INGRESS_PATH=""), extract /api/... from any prefix
-    if "/api/" in p:
-        p = "/api/" + p.split("/api/", 1)[1]
-    return p.rstrip("/") or "/"
+        return p[len(INGRESS_PATH):].rstrip("/") or "/"
+    # Match known routes as exact suffix (handles any ingress prefix)
+    for route in _API_ROUTES:
+        if p == route or p.endswith(route):
+            return route
+    return "/"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -617,6 +623,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
