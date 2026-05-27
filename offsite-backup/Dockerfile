@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     curl \
     python3 \
+    python3-paho-mqtt \
+    python3-croniter \
     jq \
     cron \
     sshfs \

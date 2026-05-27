@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """HTTP-API und Web-Dashboard für das HA Offsite Backup Add-on."""
 import json
+import logging
 import os
 import subprocess
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.request
 
@@ -15,6 +17,11 @@ LOG_FILE = "/data/logs/backup.log"
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
 RECOVERY_LOCK = "/tmp/recovery-running"
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("offsite-backup")
+
+_mqtt_client = None
 
 
 def read_options():
@@ -50,6 +57,45 @@ def is_recovery_running():
     return os.path.exists(RECOVERY_LOCK)
 
 
+def get_next_run():
+    opts = read_options()
+    schedule = opts.get("backup_schedule", "")
+    if not schedule:
+        return None
+    try:
+        from croniter import croniter
+        it = croniter(schedule, datetime.now())
+        nxt = it.get_next(datetime)
+        return nxt.replace(tzinfo=None).isoformat()
+    except Exception:
+        return None
+
+
+_PROGRESS_PATTERNS = [
+    ("erfolgreich abgeschlossen", "Fertig"),
+    ("rsync BackupPC Docker Konfiguration", "rsync Docker Config (3/3)"),
+    ("rsync BackupPC Docker Data", "rsync Docker Data (2/3)"),
+    ("rsync BackupPC Pool", "rsync BackupPC Pool (1/3)"),
+    ("Erstelle Hetzner Snapshot", "Hetzner Snapshot"),
+    ("Snapshot erstellen", "ZFS Snapshot"),
+]
+
+
+def get_progress():
+    if not is_backup_running():
+        return "Bereit"
+    try:
+        with open(LOG_FILE) as f:
+            lines = f.readlines()
+        for line in reversed(lines):
+            for pattern, label in _PROGRESS_PATTERNS:
+                if pattern in line:
+                    return label
+    except Exception:
+        pass
+    return "Bereit"
+
+
 def trigger_backup():
     if is_backup_running():
         return False, "Backup läuft bereits"
@@ -67,6 +113,8 @@ def _run_backup():
             os.unlink(BACKUP_LOCK)
         except OSError:
             pass
+    if _mqtt_client:
+        _mqtt_client.publish_state()
 
 
 def trigger_recovery(action, target=None):
@@ -91,6 +139,8 @@ def _run_recovery(action, target):
                 os.unlink(RECOVERY_LOCK)
             except OSError:
                 pass
+    if _mqtt_client:
+        _mqtt_client.publish_state()
 
 
 def list_snapshots():
@@ -114,6 +164,192 @@ def list_snapshots():
             return json.loads(resp.read()), None
     except Exception as e:
         return None, str(e)
+
+
+class MQTTClient:
+    DEVICE = {
+        "identifiers": ["offsite_backup"],
+        "name": "Offsite Backup",
+        "model": "HA Add-on v1.0",
+        "manufacturer": "XtraLarge",
+    }
+    STATE_TOPIC = "offsite_backup/state"
+    DISCOVERY_ENTITIES = [
+        ("sensor", "offsite_backup_status", {
+            "name": "Backup Status",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.status }}",
+            "icon": "mdi:cloud-check",
+        }),
+        ("sensor", "offsite_backup_last_run", {
+            "name": "Letzter Backup",
+            "device_class": "timestamp",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.last_run }}",
+            "icon": "mdi:clock-check",
+        }),
+        ("sensor", "offsite_backup_next_run", {
+            "name": "Nächster Backup",
+            "device_class": "timestamp",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.next_run }}",
+            "icon": "mdi:clock-outline",
+        }),
+        ("sensor", "offsite_backup_progress", {
+            "name": "Backup Fortschritt",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.progress }}",
+            "icon": "mdi:progress-upload",
+        }),
+        ("binary_sensor", "offsite_backup_running", {
+            "name": "Backup läuft",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.backup_running }}",
+            "payload_on": "True",
+            "payload_off": "False",
+            "device_class": "running",
+        }),
+        ("binary_sensor", "offsite_backup_recovery_running", {
+            "name": "Recovery aktiv",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.recovery_running }}",
+            "payload_on": "True",
+            "payload_off": "False",
+            "icon": "mdi:hospital-box",
+        }),
+        ("button", "offsite_backup_trigger", {
+            "name": "Backup starten",
+            "command_topic": "offsite_backup/backup/trigger",
+            "payload_press": "trigger",
+            "icon": "mdi:cloud-upload",
+        }),
+        ("switch", "offsite_backup_recovery", {
+            "name": "Recovery Umgebung",
+            "state_topic": "offsite_backup/state",
+            "value_template": "{{ value_json.recovery_running }}",
+            "payload_on": "True",
+            "payload_off": "False",
+            "command_topic": "offsite_backup/recovery/set",
+            "icon": "mdi:hospital-box",
+        }),
+    ]
+
+    def __init__(self, host, port, username, password):
+        import paho.mqtt.client as mqtt
+        self._client = mqtt.Client(client_id="offsite_backup_addon")
+        self._client.username_pw_set(username, password)
+        self._client.reconnect_delay_set(min_delay=5, max_delay=60)
+        self._client.on_connect = self._on_connect
+        self._client.on_message = self._on_message
+        self._client.connect(host, port, keepalive=60)
+        self._client.loop_start()
+
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc != 0:
+            log.warning("MQTT Verbindung fehlgeschlagen (rc=%s)", rc)
+            return
+        log.info("MQTT verbunden")
+        self._publish_discovery()
+        self.publish_state()
+        client.subscribe("offsite_backup/backup/trigger")
+        client.subscribe("offsite_backup/recovery/set")
+
+    def _on_message(self, client, userdata, msg):
+        topic = msg.topic
+        payload = msg.payload.decode().strip()
+        if topic == "offsite_backup/backup/trigger":
+            if payload == "trigger":
+                log.info("MQTT: Backup-Trigger empfangen")
+                trigger_backup()
+        elif topic == "offsite_backup/recovery/set":
+            if payload.upper() == "ON":
+                log.info("MQTT: Recovery start")
+                trigger_recovery("start")
+            elif payload.upper() == "OFF":
+                log.info("MQTT: Recovery stop")
+                trigger_recovery("stop")
+
+    def _publish_discovery(self):
+        for entity_type, unique_id, config in self.DISCOVERY_ENTITIES:
+            payload = dict(config)
+            payload["unique_id"] = unique_id
+            payload["device"] = self.DEVICE
+            topic = f"homeassistant/{entity_type}/{unique_id}/config"
+            self._client.publish(topic, json.dumps(payload, ensure_ascii=False), retain=True)
+        log.info("MQTT auto-discovery veröffentlicht")
+
+    def publish_state(self):
+        status = read_status()
+        state = {
+            "status": status.get("status", "unbekannt"),
+            "last_run": status.get("last_run"),
+            "next_run": get_next_run(),
+            "backup_running": is_backup_running(),
+            "recovery_running": is_recovery_running(),
+            "progress": get_progress(),
+        }
+        self._client.publish(self.STATE_TOPIC, json.dumps(state, ensure_ascii=False), retain=True)
+
+    def start_state_loop(self):
+        def _loop():
+            while True:
+                try:
+                    self.publish_state()
+                except Exception as e:
+                    log.warning("MQTT state publish Fehler: %s", e)
+                time.sleep(30)
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+
+
+def _get_mqtt_credentials():
+    supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
+    if supervisor_token:
+        try:
+            req = urllib.request.Request(
+                "http://supervisor/services/mqtt",
+                headers={"Authorization": f"Bearer {supervisor_token}"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            return (
+                data["host"],
+                int(data.get("port", 1883)),
+                data["username"],
+                data["password"],
+            )
+        except Exception as e:
+            log.warning("Supervisor MQTT-Abfrage fehlgeschlagen: %s", e)
+
+    host = os.environ.get("MQTT_HOST")
+    port = int(os.environ.get("MQTT_PORT", 1883))
+    username = os.environ.get("MQTT_USERNAME")
+    password = os.environ.get("MQTT_PASSWORD")
+    if host and username:
+        return host, port, username, password
+    return None
+
+
+def start_mqtt():
+    global _mqtt_client
+    opts = read_options()
+    if not opts.get("mqtt_discovery", False):
+        log.info("MQTT auto-discovery deaktiviert")
+        return
+
+    creds = _get_mqtt_credentials()
+    if not creds:
+        log.warning("MQTT-Zugangsdaten nicht verfügbar, MQTT wird nicht gestartet")
+        return
+
+    host, port, username, password = creds
+    try:
+        _mqtt_client = MQTTClient(host, port, username, password)
+        _mqtt_client.start_state_loop()
+        log.info("MQTT gestartet (%s:%s)", host, port)
+    except Exception as e:
+        log.warning("MQTT-Start fehlgeschlagen: %s", e)
+        _mqtt_client = None
 
 
 DASHBOARD_HTML = """\
@@ -169,6 +405,7 @@ DASHBOARD_HTML = """\
     <div class="row"><span class="label">Ergebnis</span><span id="status-badge" class="badge">—</span></div>
     <div class="row"><span class="label">NAS</span><code id="nas-host">—</code></div>
     <div class="row"><span class="label">Zeitplan</span><code id="schedule">—</code></div>
+    <div class="row"><span class="label">Nächster Backup</span><span id="next-run">—</span></div>
     <div class="row"><span class="label">Recovery</span><span id="recovery-status">—</span></div>
     <div class="actions">
       <button class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
@@ -233,6 +470,7 @@ async function loadStatus() {{
     badge.className = statusBadgeClass(s.status);
     document.getElementById('nas-host').textContent = o.nas_host || '?';
     document.getElementById('schedule').textContent = o.backup_schedule || '?';
+    document.getElementById('next-run').textContent = s.next_run || '—';
 
     const rec = document.getElementById('recovery-status');
     if (s.recovery_running) {{
@@ -305,6 +543,8 @@ class Handler(BaseHTTPRequestHandler):
             s = read_status()
             s["backup_running"] = is_backup_running()
             s["recovery_running"] = is_recovery_running()
+            s["next_run"] = get_next_run()
+            s["progress"] = get_progress()
             self._json(s)
         elif path == "/api/options":
             opts = read_options()
@@ -362,6 +602,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
+    start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
     server.serve_forever()
