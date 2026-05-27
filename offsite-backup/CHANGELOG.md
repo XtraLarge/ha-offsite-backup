@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.30 - 2026-05-27
+
+### Geändert
+- Log-Button "Log aktualisieren" zeigt jetzt Toast-Bestätigung "Log aktualisiert" nach erfolgreichem Refresh
+- Log-Bereich scrollt automatisch nach unten wenn man am Ende war (Auto-Scroll während Backup)
+
 ## 1.2.29 - 2026-05-27
 
 ### Behoben

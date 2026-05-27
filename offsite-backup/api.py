@@ -435,7 +435,7 @@ DASHBOARD_HTML = """\
     <div class="row"><span class="label">BackupPC</span><span id="recovery-status">—</span></div>
     <div class="actions">
       <button class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
-      <button class="btn-secondary" onclick="loadLog()">&#8635; Log aktualisieren</button>
+      <button class="btn-secondary" onclick="loadLog(true)">&#8635; Log aktualisieren</button>
     </div>
   </div>
 
@@ -525,11 +525,15 @@ async function loadStatus() {
   } catch(e) { console.error(e); }
 }
 
-async function loadLog() {
+async function loadLog(showFeedback=false) {
   try {
     const d = await fetch(base + '/api/log').then(r => r.json());
-    document.getElementById('log-content').textContent = d.lines.join('') || '(kein Log)';
-  } catch(e) { document.getElementById('log-content').textContent = 'Fehler beim Laden'; }
+    const pre = document.getElementById('log-content');
+    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 60;
+    pre.textContent = d.lines.join('') || '(kein Log)';
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+    if (showFeedback) showMsg('Log aktualisiert', 1500);
+  } catch(e) { document.getElementById('log-content').textContent = 'Fehler beim Laden: ' + e; }
 }
 
 async function loadSnapshots() {
@@ -586,7 +590,7 @@ function openRecoveryUI() {
 // Initial laden
 loadStatus(); loadLog(); loadSnapshots();
 setInterval(loadStatus, 15000);
-setInterval(loadLog, 30000);
+setInterval(() => loadLog(false), 30000);
 </script>
 </body>
 </html>
