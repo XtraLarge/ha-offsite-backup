@@ -54,15 +54,26 @@ def is_backup_running():
 
 
 def _supervisor_request(method, path, body=None):
+    # 1. Supervisor-Token aus Umgebung (standard für HA add-ons mit hassio_api: true)
     token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
-    if not token:
-        raise RuntimeError("SUPERVISOR_TOKEN nicht verfügbar")
+    if token:
+        base_url = "http://supervisor"
+        auth_header = f"Bearer {token}"
+    else:
+        # 2. Fallback: Long-Lived Access Token via HA Core API Proxy
+        opts = read_options()
+        llat = opts.get("ha_token", "").strip()
+        if not llat:
+            raise RuntimeError("Kein Supervisor-Token und kein ha_token konfiguriert")
+        base_url = "http://homeassistant/api/hassio"
+        auth_header = f"Bearer {llat}"
+
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(
-        f"http://supervisor{path}",
+        f"{base_url}{path}",
         data=data,
         method=method,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={"Authorization": auth_header, "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
@@ -679,13 +690,14 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
     _sv_token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
-    log.info("Supervisor-Token: %s", "verfügbar" if _sv_token else "NICHT VERFÜGBAR")
-    _token_keys = [k for k in os.environ if any(x in k.upper() for x in ("TOKEN", "HASSIO", "SUPERVISOR", "SECRET"))]
-    log.info("Token-Env-Vars vorhanden: %s", _token_keys or "keine")
-    log.info("Alle Env-Vars: %s", sorted(os.environ.keys()))
-    for _f in ["/run/secrets/hassio_token", "/etc/supervisor_token",
-               "/var/run/hassio_supervisor_token", "/data/supervisor_token"]:
-        log.info("Token-Datei %s: %s", _f, "vorhanden" if os.path.exists(_f) else "fehlt")
+    if _sv_token:
+        log.info("Supervisor-Token: verfügbar (Env)")
+    else:
+        opts_check = read_options()
+        if opts_check.get("ha_token", "").strip():
+            log.info("Supervisor-Token: nicht in Env, nutze ha_token (HA LLAT)")
+        else:
+            log.warning("Kein Supervisor-Token und kein ha_token — BackupPC-Steuerung nicht verfügbar")
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
