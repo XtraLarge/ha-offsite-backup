@@ -54,26 +54,16 @@ def is_backup_running():
 
 
 def _supervisor_request(method, path, body=None):
-    # 1. Supervisor-Token aus Umgebung (standard für HA add-ons mit hassio_api: true)
-    token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
-    if token:
-        base_url = "http://supervisor"
-        auth_header = f"Bearer {token}"
-    else:
-        # 2. Fallback: Long-Lived Access Token via HA Core API Proxy
-        opts = read_options()
-        llat = opts.get("ha_token", "").strip()
-        if not llat:
-            raise RuntimeError("Kein Supervisor-Token und kein ha_token konfiguriert")
-        base_url = "http://homeassistant/api/hassio"
-        auth_header = f"Bearer {llat}"
-
+    opts = read_options()
+    token = opts.get("ha_token", "").strip()
+    if not token:
+        raise RuntimeError("ha_token nicht konfiguriert")
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(
-        f"{base_url}{path}",
+        f"http://homeassistant/api/hassio{path}",
         data=data,
         method=method,
-        headers={"Authorization": auth_header, "Content-Type": "application/json"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
@@ -689,15 +679,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
-    _sv_token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
-    if _sv_token:
-        log.info("Supervisor-Token: verfügbar (Env)")
-    else:
-        opts_check = read_options()
-        if opts_check.get("ha_token", "").strip():
-            log.info("Supervisor-Token: nicht in Env, nutze ha_token (HA LLAT)")
-        else:
-            log.warning("Kein Supervisor-Token und kein ha_token — BackupPC-Steuerung nicht verfügbar")
+    if not read_options().get("ha_token", "").strip():
+        log.warning("ha_token nicht konfiguriert — BackupPC-Steuerung nicht verfügbar")
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)

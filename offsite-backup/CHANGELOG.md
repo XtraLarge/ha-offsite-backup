@@ -1,14 +1,10 @@
 # Changelog
 
-## 1.2.19 - 2026-05-27
-
-### Behoben
-- BackupPC starten/beenden: Fallback auf HA Long-Lived Access Token (LLAT) wenn `SUPERVISOR_TOKEN` nicht injiziert wird
-- Neues Config-Feld `ha_token` (HA → Profil → Langfristige Zugriffstoken)
-- `homeassistant_api: true` ergänzt
+## 1.2.20 - 2026-05-27
 
 ### Geändert
-- Alle Debug-Logs entfernt
+- BackupPC-Steuerung nutzt jetzt direkt einen HA Long-Lived Access Token (`ha_token`) — kein SUPERVISOR_TOKEN mehr
+- `homeassistant_api: true` statt `hassio_api`; Supervisor API via `http://homeassistant/api/hassio/`
 
 ## 1.2.18 - 2026-05-27
 
