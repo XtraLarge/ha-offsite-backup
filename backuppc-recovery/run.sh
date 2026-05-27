@@ -68,6 +68,8 @@ fi
 # BackupPC-Config übernehmen (einmalig pro Snapshot/Live-Kombination)
 if [[ ! -f "$IMPORT_FLAG" ]]; then
   echo "Importiere BackupPC-Config..."
+  # Container-Defaults entfernen (können Typ-Konflikte mit Hetzner-Verzeichnisstruktur verursachen)
+  rm -rf "${BACKUPPC_CONF:?}/"*
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." "$BACKUPPC_HOME/" 2>/dev/null || true
   # TopDir auf den SSHFS-Mount setzen
