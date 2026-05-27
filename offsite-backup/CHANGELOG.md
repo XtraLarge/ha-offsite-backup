@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.18 - 2026-05-27
+
+### Behoben
+- `hassio_role: manager` ergänzt — nur damit injiziert der Supervisor `SUPERVISOR_TOKEN` in den Container (mit `default`-Rolle wurde der Token nicht gesetzt, BackupPC starten/beenden schlug fehl)
+
 ## 1.2.12 - 2026-05-27
 
 ### Behoben

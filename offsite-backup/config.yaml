@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.2.17"
+version: "1.2.18"
 slug: offsite_backup
 description: Offsite Backup via Hetzner Storage Box (rsync + ZFS Snapshot) mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -52,6 +52,7 @@ schema:
 
 docker_api: true
 hassio_api: true
+hassio_role: manager
 
 privileged:
   - SYS_ADMIN
