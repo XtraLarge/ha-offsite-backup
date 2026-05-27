@@ -128,9 +128,34 @@ remote_stop() {
   ok "Remote aufgeräumt."
 }
 
-# ---------- Local-Modus Helpers (Docker-Socket auf HA-RPi) ----------
+# ---------- Local-Modus Helpers ----------
+# Docker läuft auf dem HA-Host (HAOS hat keinen dockerd in Add-ons erreichbar).
+# Das Add-on SSHt zum Host (172.30.32.1:22222) und führt Docker dort aus.
+# Add-on-Daten liegen auf dem Host unter HOST_DATA_DIR.
 LOCAL_SSHFS_MOUNT="/data/backuppc-recovery/hetzner"
 LOCAL_CONFIG_DIR="/data/backuppc-recovery"
+HOST_DATA_DIR="/mnt/data/supervisor/addons/data/3e98a749_offsite_backup"
+HOST_SSH_KEY="/data/secrets/id_recovery_host"
+HOST_IP="172.30.32.1"
+HOST_PORT="22222"
+
+_hssh() {
+  ssh -p "$HOST_PORT" -i "$HOST_SSH_KEY" \
+    -o BatchMode=yes -o StrictHostKeyChecking=no \
+    "root@${HOST_IP}" "$@"
+}
+
+local_ensure_host_key() {
+  if [[ ! -f "$HOST_SSH_KEY" ]]; then
+    ssh-keygen -t ed25519 -f "$HOST_SSH_KEY" -N "" -C "recovery-host" >/dev/null
+    chmod 600 "$HOST_SSH_KEY"
+    local pub; pub=$(cat "${HOST_SSH_KEY}.pub")
+    _hssh "grep -qF 'recovery-host' /root/.ssh/authorized_keys 2>/dev/null || echo '$pub' >> /root/.ssh/authorized_keys" 2>/dev/null \
+      || warn "Host-Key-Eintrag fehlgeschlagen – bitte manuell: echo '$pub' >> /root/.ssh/authorized_keys (Port 22222)"
+    ok "Host SSH-Key eingerichtet."
+  fi
+  _hssh "echo ok" >/dev/null || err "Kein SSH-Zugang zum Host (${HOST_IP}:${HOST_PORT})."
+}
 
 local_mount_hetzner() {
   mkdir -p "$LOCAL_SSHFS_MOUNT"
@@ -151,7 +176,7 @@ local_copy_config() {
   if [[ "$cnt" -eq 0 ]]; then
     cp -a "${LOCAL_SSHFS_MOUNT}/Docker/backuppc/config/." "${LOCAL_CONFIG_DIR}/config/"
     cp -a "${LOCAL_SSHFS_MOUNT}/Docker/backuppc/home/."   "${LOCAL_CONFIG_DIR}/home/" 2>/dev/null || true
-    cp    "${LOCAL_SSHFS_MOUNT}/Docker/backuppc/ssh_config" "${LOCAL_CONFIG_DIR}/ssh_config"
+    cp    "${LOCAL_SSHFS_MOUNT}/Docker/backuppc/ssh_config" "${LOCAL_CONFIG_DIR}/ssh_config" 2>/dev/null || true
     chown -R 1000:1000 "${LOCAL_CONFIG_DIR}/config" "${LOCAL_CONFIG_DIR}/home" 2>/dev/null || true
     ok "Config lokal kopiert."
   else
@@ -159,65 +184,68 @@ local_copy_config() {
   fi
 }
 
-local_start_container() {
-  local prepared="${CONTAINER_NAME}-prepared"
-  if ! docker images -q "$prepared" 2>/dev/null | grep -q .; then
-    log "Phase 1: configure.pl auf lokalem tmpfs-Verzeichnis..."
-    local init="${CONTAINER_NAME}-init" init_data
-    init_data=$(mktemp -d)
-    docker rm -f "$init" 2>/dev/null || true
-    docker run -d --name "$init" \
-      -e "TZ=$TZ" \
-      -v "${LOCAL_CONFIG_DIR}/config:/etc/backuppc" \
-      -v "${LOCAL_CONFIG_DIR}/home:/home/backuppc" \
-      -v "${LOCAL_CONFIG_DIR}/ssh_config:/etc/ssh/ssh_config" \
-      -v "${init_data}:/data/backuppc" \
-      "$CONTAINER_IMAGE"
-    for i in $(seq 1 24); do
-      sleep 5
-      docker exec "$init" test -f /firstrun 2>/dev/null || { ok "configure.pl fertig."; break; }
-      [[ "$i" -eq 24 ]] && { docker logs --tail 20 "$init"; docker stop "$init"; docker rm "$init"; rm -rf "$init_data"; err "configure.pl Timeout."; }
-    done
-    docker commit "$init" "$prepared"
-    docker stop "$init"; docker rm "$init"; rm -rf "$init_data"
-    ok "Vorbereitetes Image: $prepared"
-  fi
-  log "Phase 2: Recovery-Container lokal starten (Port $CONTAINER_PORT)..."
-  docker run -d --name "$CONTAINER_NAME" -h "$CONTAINER_NAME" --restart=unless-stopped \
-    -p "${CONTAINER_PORT}:${CONTAINER_INT_PORT}" \
-    -e "TZ=$TZ" \
-    --device /dev/fuse --cap-add SYS_ADMIN \
-    -v "${LOCAL_CONFIG_DIR}/config:/etc/backuppc" \
-    -v "${LOCAL_CONFIG_DIR}/home:/home/backuppc" \
-    -v "${LOCAL_CONFIG_DIR}/ssh_config:/etc/ssh/ssh_config" \
-    -v "${LOCAL_SSHFS_MOUNT}/BackupPC:/data/backuppc" \
-    "$prepared"
-  for i in $(seq 1 12); do
-    sleep 5
-    docker ps --filter "name=^${CONTAINER_NAME}$" --format '{{.Status}}' | grep -q "Up" && { ok "Container läuft."; return; }
-  done
-  err "Container startet nicht nach 60s."
-}
-
 local_disable_backups() {
   local config="${LOCAL_CONFIG_DIR}/config/config.pl"
   grep -qF 'Recovery-Modus' "$config" 2>/dev/null || {
     printf '\n$Conf{BackupsDisable} = 2;  # Recovery-Modus\n' >> "$config"
-    docker exec "$CONTAINER_NAME" supervisorctl restart backuppc 2>/dev/null || true
     ok "BackupsDisable = 2 gesetzt."
   }
 }
 
+local_start_container() {
+  local prepared="${CONTAINER_NAME}-prepared"
+  local h_config="${HOST_DATA_DIR}/backuppc-recovery/config"
+  local h_home="${HOST_DATA_DIR}/backuppc-recovery/home"
+  local h_ssh="${HOST_DATA_DIR}/backuppc-recovery/ssh_config"
+  local h_hetzner="${HOST_DATA_DIR}/backuppc-recovery/hetzner/BackupPC"
+  local h_key="${HOST_DATA_DIR}/secrets/id_ed25519_hetzner"
+
+  if ! _hssh "docker images -q $prepared 2>/dev/null" | grep -q .; then
+    log "Phase 1: configure.pl (Host-Docker, tmpfs)..."
+    local init="${CONTAINER_NAME}-init"
+    local init_data; init_data=$(_hssh "mktemp -d")
+    _hssh "docker rm -f $init 2>/dev/null || true"
+    _hssh "docker run -d --name $init \
+      -e 'TZ=$TZ' \
+      -v '${h_config}:/etc/backuppc' \
+      -v '${h_home}:/home/backuppc' \
+      -v '${init_data}:/data/backuppc' \
+      $CONTAINER_IMAGE"
+    for i in $(seq 1 24); do
+      sleep 5
+      _hssh "docker exec $init test -f /firstrun 2>/dev/null" || { ok "configure.pl fertig."; break; }
+      [[ "$i" -eq 24 ]] && { _hssh "docker logs --tail 20 $init; docker stop $init; docker rm $init; rm -rf $init_data"; err "configure.pl Timeout."; }
+    done
+    _hssh "docker commit $init $prepared && docker stop $init && docker rm $init && rm -rf $init_data"
+    ok "Vorbereitetes Image: $prepared"
+  fi
+
+  log "Phase 2: Recovery-Container auf Host starten (Port $CONTAINER_PORT)..."
+  _hssh "docker run -d --name $CONTAINER_NAME -h $CONTAINER_NAME --restart=unless-stopped \
+    -p ${CONTAINER_PORT}:${CONTAINER_INT_PORT} \
+    -e 'TZ=$TZ' \
+    --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+    -v '${h_config}:/etc/backuppc' \
+    -v '${h_home}:/home/backuppc' \
+    -v '${h_hetzner}:/data/backuppc' \
+    $prepared"
+  for i in $(seq 1 12); do
+    sleep 5
+    _hssh "docker ps --filter name=^${CONTAINER_NAME}$ --format '{{.Status}}'" | grep -q "Up" && { ok "Container läuft."; return; }
+  done
+  err "Container startet nicht nach 60s."
+}
+
 local_stop() {
-  log "Beende lokalen Recovery-Container..."
-  docker stop "$CONTAINER_NAME" 2>/dev/null; docker rm "$CONTAINER_NAME" 2>/dev/null || true
-  docker rmi "${CONTAINER_NAME}-prepared" "$CONTAINER_IMAGE" 2>/dev/null || true
+  log "Beende Recovery-Container auf Host..."
+  _hssh "docker stop $CONTAINER_NAME 2>/dev/null; docker rm $CONTAINER_NAME 2>/dev/null" || true
+  _hssh "docker rmi ${CONTAINER_NAME}-prepared $CONTAINER_IMAGE 2>/dev/null" || true
   if mountpoint -q "$LOCAL_SSHFS_MOUNT" 2>/dev/null; then
     fusermount3 -u "$LOCAL_SSHFS_MOUNT" 2>/dev/null \
       || fusermount -u "$LOCAL_SSHFS_MOUNT" 2>/dev/null \
       || umount "$LOCAL_SSHFS_MOUNT" || warn "SSHFS-Unmount fehlgeschlagen"
   fi
-  ok "Lokal aufgeräumt."
+  ok "Recovery aufgeräumt."
 }
 
 local_print_summary() {
@@ -265,10 +293,11 @@ if [[ "$TARGET" == "local" ]]; then
   case "$MODE" in
     start)
       [[ ! -f "$HETZNER_KEY" ]] && err "$HETZNER_KEY fehlt – Secrets einrichten (siehe DOCS.md)"
+      local_ensure_host_key
       local_mount_hetzner
       local_copy_config
-      local_start_container
       local_disable_backups
+      local_start_container
       local_print_summary
       ;;
     stop)
