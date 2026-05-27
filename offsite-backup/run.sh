@@ -22,7 +22,7 @@ _write_secret() {
   local val; val=$(jq -r ".$key // empty" "$CONFIG")
   [[ -z "$val" ]] && return
   # \n-Literale in echte Newlines umwandeln (für einzeilige Eingabe in HA-UI)
-  printf '%b' "$val" > "$file"
+  printf '%b\n' "$val" > "$file"
   chmod 600 "$file"
   echo "Secret $key → $file geschrieben"
 }
@@ -35,7 +35,6 @@ _write_secret hetzner_token     /data/secrets/hetzner_token
 echo "$BACKUP_SCHEDULE root /scripts/backup.sh >> /data/logs/backup.log 2>&1" \
     > /etc/cron.d/offsite-backup
 chmod 0644 /etc/cron.d/offsite-backup
-crontab /etc/cron.d/offsite-backup
 
 # Cron als Daemon starten (kein init-System nötig)
 cron
