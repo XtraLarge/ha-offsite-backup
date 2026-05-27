@@ -60,7 +60,7 @@ def _supervisor_request(method, path, body=None):
         raise RuntimeError("ha_token nicht konfiguriert")
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(
-        f"http://homeassistant/api/hassio{path}",
+        f"http://homeassistant:8123/api/hassio{path}",
         data=data,
         method=method,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
