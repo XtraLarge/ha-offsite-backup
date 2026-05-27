@@ -477,8 +477,7 @@ DASHBOARD_HTML = """\
 <div id="msg"></div>
 
 <script>
-// Basis-Pfad aus aktueller URL ableiten – funktioniert mit und ohne Ingress-Prefix
-const base = window.location.pathname.replace(/\/$/, '');
+const base = "__INGRESS_PATH__";
 
 function showMsg(text, dur=3000) {{
   const el = document.getElementById('msg');
@@ -590,11 +589,11 @@ _API_ROUTES = (
 )
 
 
-def _normalize_path(raw):
+def _normalize_path(raw, ingress=""):
     p = raw.split("?")[0].rstrip("/")
-    if INGRESS_PATH and p.startswith(INGRESS_PATH):
-        return p[len(INGRESS_PATH):].rstrip("/") or "/"
-    # Match known routes as exact suffix (handles any ingress prefix)
+    prefix = ingress or INGRESS_PATH
+    if prefix and p.startswith(prefix):
+        return p[len(prefix):].rstrip("/") or "/"
     for route in _API_ROUTES:
         if p == route or p.endswith(route):
             return route
@@ -603,10 +602,11 @@ def _normalize_path(raw):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = _normalize_path(self.path)
+        ingress = INGRESS_PATH or self.headers.get("X-Ingress-Path", "")
+        path = _normalize_path(self.path, ingress)
 
         if path == "/":
-            html = DASHBOARD_HTML
+            html = DASHBOARD_HTML.replace("__INGRESS_PATH__", ingress)
             self._html(html)
         elif path == "/api/status":
             s = read_status()
@@ -631,7 +631,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        path = _normalize_path(self.path)
+        ingress = INGRESS_PATH or self.headers.get("X-Ingress-Path", "")
+        path = _normalize_path(self.path, ingress)
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
 
@@ -664,8 +665,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def log_message(self, *args):
-        pass
+    def log_message(self, fmt, *args):
+        log.info("HTTP %s", fmt % args)
 
 
 if __name__ == "__main__":
