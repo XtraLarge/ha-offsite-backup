@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.23 - 2026-05-27
+
+### Behoben
+- `hassio_api: true` ergänzt (war in v1.2.20 entfernt worden) — ohne dieses Flag injiziert der Supervisor keinen SUPERVISOR_TOKEN, auch wenn `hassio_role: manager` gesetzt ist
+
 ## 1.2.22 - 2026-05-27
 
 ### Geändert
