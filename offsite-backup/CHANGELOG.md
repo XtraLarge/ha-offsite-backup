@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.4 - 2026-05-27
+
+### Geändert
+- Recovery-Steuerung nutzt jetzt Supervisor API (`/addons/3e98a749_backuppc_recovery/start|stop`) statt lokalem Shell-Script
+- Recovery-Status wird direkt vom Supervisor abgefragt (kein Lock-File mehr)
+- `hassio_api: true` ergänzt, damit der Supervisor-Endpunkt erreichbar ist
+
 ## 1.2.3 - 2026-05-27
 
 ### Behoben

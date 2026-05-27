@@ -16,7 +16,7 @@ OPTIONS_FILE = "/data/options.json"
 LOG_FILE = "/data/logs/backup.log"
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
-RECOVERY_LOCK = "/tmp/recovery-running"
+RECOVERY_ADDON_SLUG = "3e98a749_backuppc_recovery"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
@@ -53,8 +53,27 @@ def is_backup_running():
     return os.path.exists(BACKUP_LOCK)
 
 
+def _supervisor_request(method, path, body=None):
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        raise RuntimeError("SUPERVISOR_TOKEN nicht verfügbar")
+    data = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(
+        f"http://supervisor{path}",
+        data=data,
+        method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
 def is_recovery_running():
-    return os.path.exists(RECOVERY_LOCK)
+    try:
+        data = _supervisor_request("GET", f"/addons/{RECOVERY_ADDON_SLUG}/info")
+        return data.get("data", {}).get("state") == "started"
+    except Exception:
+        return False
 
 
 def get_next_run():
@@ -118,30 +137,18 @@ def _run_backup():
         _mqtt_client.publish_state()
 
 
-def trigger_recovery(action, target=None):
-    if action == "start" and is_recovery_running():
-        return False, "Recovery läuft bereits"
-    t = threading.Thread(target=_run_recovery, args=(action, target), daemon=True)
-    t.start()
-    return True, f"Recovery {action} gestartet"
-
-
-def _run_recovery(action, target):
-    if action == "start":
-        open(RECOVERY_LOCK, "w").close()
+def trigger_recovery(action):
     try:
-        cmd = ["/scripts/recovery.sh", f"--{action}"]
-        if target:
-            cmd.append(target)
-        subprocess.run(cmd, capture_output=False)
-    finally:
-        if action == "stop":
-            try:
-                os.unlink(RECOVERY_LOCK)
-            except OSError:
-                pass
-    if _mqtt_client:
-        _mqtt_client.publish_state()
+        if action == "start":
+            _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/start")
+        else:
+            _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/stop")
+        if _mqtt_client:
+            threading.Timer(3, _mqtt_client.publish_state).start()
+        return True, f"Recovery {action} ausgelöst"
+    except Exception as e:
+        log.warning("Recovery %s fehlgeschlagen: %s", action, e)
+        return False, f"Recovery {action} fehlgeschlagen: {e}"
 
 
 def list_snapshots():
@@ -575,12 +582,10 @@ class Handler(BaseHTTPRequestHandler):
             ok_flag, msg = trigger_backup()
             self._json({"ok": ok_flag, "message": msg})
         elif path == "/api/recovery/start":
-            target = body.get("target")
-            ok_flag, msg = trigger_recovery("start", target)
+            ok_flag, msg = trigger_recovery("start")
             self._json({"ok": ok_flag, "message": msg})
         elif path == "/api/recovery/stop":
-            target = body.get("target")
-            ok_flag, msg = trigger_recovery("stop", target)
+            ok_flag, msg = trigger_recovery("stop")
             self._json({"ok": ok_flag, "message": msg})
         else:
             self._json({"error": "Not found"}, 404)
