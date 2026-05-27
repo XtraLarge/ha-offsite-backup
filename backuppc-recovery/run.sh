@@ -109,6 +109,17 @@ export BACKUPPC_GROUPNAME=backuppc
 export BACKUPPC_UUID=1000
 export BACKUPPC_GUID=1000
 
+# backuppc-User/-Gruppe anlegen (wird normalerweise vom adferrand-Entrypoint erledigt)
+if ! getent group backuppc >/dev/null 2>&1; then
+  addgroup -g 1000 backuppc 2>/dev/null || true
+fi
+if ! id backuppc >/dev/null 2>&1; then
+  adduser -D -u 1000 -G backuppc -h /home/backuppc -s /bin/sh backuppc 2>/dev/null || true
+  echo "backuppc-User angelegt (UID 1000)."
+fi
+mkdir -p /home/backuppc /data/backuppc
+chown 1000:1000 /home/backuppc /data/backuppc 2>/dev/null || true
+
 # MQTT-State-Publisher starten
 python3 /state.py &
 
