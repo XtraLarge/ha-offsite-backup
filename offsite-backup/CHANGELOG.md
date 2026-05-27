@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5 - 2026-05-27
+
+### Behoben
+- Dashboard: Alle API-Aufrufe schlugen fehl wenn `INGRESS_PATH` nicht gesetzt war (fetch-Basis dynamisch aus `window.location` abgeleitet, Server-Routing via `_normalize_path()` robust gemacht)
+- Dashboard: "Snapshots laden" in den Hetzner-Snapshots-Abschnitt verschoben
+
+### Geändert
+- "Recovery (BackupPC)" → "BackupPC Umgebung" (Karte, Status-Zeile, Buttons, Dialoge)
+
 ## 1.2.4 - 2026-05-27
 
 ### Geändert
