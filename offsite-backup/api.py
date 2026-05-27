@@ -386,36 +386,36 @@ DASHBOARD_HTML = """\
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Offsite Backup</title>
   <style>
-    :root {{ --ok:#4CAF50; --err:#f44336; --run:#2196F3; --warn:#FF9800; }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: -apple-system, sans-serif; background: #f0f2f5; color: #333; }}
-    header {{ background: #1976D2; color: #fff; padding: 1rem 1.5rem; display: flex; align-items: center; gap: .75rem; }}
-    header h1 {{ font-size: 1.2rem; font-weight: 600; }}
-    main {{ max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }}
-    .card {{ background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .card h2 {{ font-size: .95rem; font-weight: 600; color: #555; margin-bottom: .75rem; text-transform: uppercase; letter-spacing: .04em; }}
-    .row {{ display: flex; align-items: center; gap: .5rem; margin: .35rem 0; font-size: .9rem; }}
-    .label {{ color: #888; min-width: 110px; }}
-    .badge {{ padding: .2em .6em; border-radius: 4px; font-weight: 600; font-size: .82rem; }}
-    .badge-ok    {{ background: #e8f5e9; color: var(--ok); }}
-    .badge-failed {{ background: #ffebee; color: var(--err); }}
-    .badge-running {{ background: #e3f2fd; color: var(--run); }}
-    .badge-unbekannt {{ background: #f5f5f5; color: #999; }}
-    .actions {{ display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }}
-    button {{ border: none; padding: .55rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: .88rem; font-weight: 500; transition: opacity .15s; }}
-    button:hover {{ opacity: .85; }}
-    .btn-primary {{ background: #1976D2; color: #fff; }}
-    .btn-success {{ background: #388E3C; color: #fff; }}
-    .btn-danger  {{ background: #c62828; color: #fff; }}
-    .btn-secondary {{ background: #eee; color: #333; }}
-    pre {{ background: #1a1a2e; color: #a0d0a0; padding: 1rem; border-radius: 6px; font-size: .78rem; line-height: 1.45; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-word; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: .88rem; }}
-    th {{ background: #f5f5f5; padding: .5rem .75rem; text-align: left; font-weight: 600; color: #555; }}
-    td {{ padding: .45rem .75rem; border-top: 1px solid #eee; }}
-    .spinner {{ display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: var(--run); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 4px; }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    code {{ background: #f5f5f5; padding: .1em .35em; border-radius: 3px; font-size: .85em; }}
-    #msg {{ position: fixed; bottom: 1.5rem; right: 1.5rem; background: #333; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; display: none; font-size: .88rem; z-index: 999; }}
+    :root { --ok:#4CAF50; --err:#f44336; --run:#2196F3; --warn:#FF9800; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #f0f2f5; color: #333; }
+    header { background: #1976D2; color: #fff; padding: 1rem 1.5rem; display: flex; align-items: center; gap: .75rem; }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }
+    .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .card h2 { font-size: .95rem; font-weight: 600; color: #555; margin-bottom: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+    .row { display: flex; align-items: center; gap: .5rem; margin: .35rem 0; font-size: .9rem; }
+    .label { color: #888; min-width: 110px; }
+    .badge { padding: .2em .6em; border-radius: 4px; font-weight: 600; font-size: .82rem; }
+    .badge-ok    { background: #e8f5e9; color: var(--ok); }
+    .badge-failed { background: #ffebee; color: var(--err); }
+    .badge-running { background: #e3f2fd; color: var(--run); }
+    .badge-unbekannt { background: #f5f5f5; color: #999; }
+    .actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .75rem; }
+    button { border: none; padding: .55rem 1.2rem; border-radius: 6px; cursor: pointer; font-size: .88rem; font-weight: 500; transition: opacity .15s; }
+    button:hover { opacity: .85; }
+    .btn-primary { background: #1976D2; color: #fff; }
+    .btn-success { background: #388E3C; color: #fff; }
+    .btn-danger  { background: #c62828; color: #fff; }
+    .btn-secondary { background: #eee; color: #333; }
+    pre { background: #1a1a2e; color: #a0d0a0; padding: 1rem; border-radius: 6px; font-size: .78rem; line-height: 1.45; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-word; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th { background: #f5f5f5; padding: .5rem .75rem; text-align: left; font-weight: 600; color: #555; }
+    td { padding: .45rem .75rem; border-top: 1px solid #eee; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: var(--run); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 4px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    code { background: #f5f5f5; padding: .1em .35em; border-radius: 3px; font-size: .85em; }
+    #msg { position: fixed; bottom: 1.5rem; right: 1.5rem; background: #333; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; display: none; font-size: .88rem; z-index: 999; }
   </style>
 </head>
 <body>
@@ -479,21 +479,21 @@ DASHBOARD_HTML = """\
 <script>
 const base = "__INGRESS_PATH__";
 
-function showMsg(text, dur=3000) {{
+function showMsg(text, dur=3000) {
   const el = document.getElementById('msg');
   el.textContent = text;
   el.style.display = 'block';
   clearTimeout(el._t);
   el._t = setTimeout(() => el.style.display = 'none', dur);
-}}
+}
 
-function statusBadgeClass(s) {{
-  const map = {{ success:'ok', failed:'failed', running:'running', unbekannt:'unbekannt' }};
+function statusBadgeClass(s) {
+  const map = { success:'ok', failed:'failed', running:'running', unbekannt:'unbekannt' };
   return 'badge badge-' + (map[s] || 'unbekannt');
-}}
+}
 
-async function loadStatus() {{
-  try {{
+async function loadStatus() {
+  try {
     const [s, o] = await Promise.all([
       fetch(base + '/api/status').then(r => r.json()),
       fetch(base + '/api/options').then(r => r.json()),
@@ -507,71 +507,71 @@ async function loadStatus() {{
     document.getElementById('next-run').textContent = s.next_run || '—';
 
     const rec = document.getElementById('recovery-status');
-    if (s.recovery_running) {{
+    if (s.recovery_running) {
       rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>läuft</span>';
-      const url = `http://${{location.hostname}}:8900`;
+      const url = `http://${location.hostname}:8900`;
       document.getElementById('recovery-url').style.display = 'block';
       document.getElementById('recovery-link').href = url;
       document.getElementById('recovery-link').textContent = url;
-    }} else {{
+    } else {
       rec.innerHTML = '<span class="badge badge-unbekannt">inaktiv</span>';
       document.getElementById('recovery-url').style.display = 'none';
-    }}
-  }} catch(e) {{ console.error(e); }}
-}}
+    }
+  } catch(e) { console.error(e); }
+}
 
-async function loadLog() {{
-  try {{
+async function loadLog() {
+  try {
     const d = await fetch(base + '/api/log').then(r => r.json());
     document.getElementById('log-content').textContent = d.lines.join('') || '(kein Log)';
-  }} catch(e) {{ document.getElementById('log-content').textContent = 'Fehler beim Laden'; }}
-}}
+  } catch(e) { document.getElementById('log-content').textContent = 'Fehler beim Laden'; }
+}
 
-async function loadSnapshots() {{
+async function loadSnapshots() {
   const el = document.getElementById('snapshots-content');
   el.innerHTML = '<em>Lade...</em>';
-  try {{
+  try {
     const d = await fetch(base + '/api/backups').then(r => r.json());
-    if (d.error) {{ el.innerHTML = `<span style="color:red">${{d.error}}</span>`; return; }}
+    if (d.error) { el.innerHTML = `<span style="color:red">${d.error}</span>`; return; }
     const snaps = d.snapshots || [];
-    if (!snaps.length) {{ el.innerHTML = '<em style="color:#aaa">Keine Snapshots vorhanden</em>'; return; }}
+    if (!snaps.length) { el.innerHTML = '<em style="color:#aaa">Keine Snapshots vorhanden</em>'; return; }
     el.innerHTML = '<table><thead><tr><th>Name</th><th>Erstellt</th><th>Beschreibung</th></tr></thead><tbody>'
-      + snaps.map(s => `<tr><td><code>${{s.name||''}}</code></td><td>${{(s.created||'').slice(0,19)}}</td><td>${{s.description||''}}</td></tr>`).join('')
+      + snaps.map(s => `<tr><td><code>${s.name||''}</code></td><td>${(s.created||'').slice(0,19)}</td><td>${s.description||''}</td></tr>`).join('')
       + '</tbody></table>';
     // Dropdown in BackupPC-Card befüllen
     const sel = document.getElementById('snapshot-select');
-    if (sel) {{
+    if (sel) {
       const prev = sel.value;
       sel.innerHTML = '<option value="">Live-Daten (aktuell)</option>'
-        + snaps.map(s => `<option value="${{s.name||''}}">${{s.name||''}} &mdash; ${{(s.created||'').slice(0,10)}}</option>`).join('');
+        + snaps.map(s => `<option value="${s.name||''}">${s.name||''} &mdash; ${(s.created||'').slice(0,10)}</option>`).join('');
       if (prev) sel.value = prev;
-    }}
-  }} catch(e) {{ el.innerHTML = `<span style="color:red">Fehler: ${{e}}</span>`; }}
-}}
+    }
+  } catch(e) { el.innerHTML = `<span style="color:red">Fehler: ${e}</span>`; }
+}
 
-async function triggerBackup() {{
+async function triggerBackup() {
   if (!confirm('Backup jetzt manuell starten?')) return;
-  const d = await fetch(base + '/api/backup', {{method:'POST'}}).then(r => r.json());
+  const d = await fetch(base + '/api/backup', {method:'POST'}).then(r => r.json());
   showMsg(d.message, 4000);
   setTimeout(loadStatus, 1000);
-}}
+}
 
-async function triggerRecovery(action) {{
+async function triggerRecovery(action) {
   const sel = document.getElementById('snapshot-select');
   const snapshot = sel ? sel.value : '';
   const label = action === 'start' ? 'starten' : 'beenden';
-  const src = (action === 'start') ? (snapshot ? `Snapshot: ${{snapshot}}` : 'Live-Daten') : '';
-  const msg = src ? `BackupPC Umgebung ${{label}}?\n\nDatenquelle: ${{src}}` : `BackupPC Umgebung ${{label}}?`;
+  const src = (action === 'start') ? (snapshot ? `Snapshot: ${snapshot}` : 'Live-Daten') : '';
+  const msg = src ? `BackupPC Umgebung ${label}?\n\nDatenquelle: ${src}` : `BackupPC Umgebung ${label}?`;
   if (!confirm(msg)) return;
-  const body = action === 'start' ? {{snapshot_name: snapshot}} : {{}};
-  const d = await fetch(base + `/api/recovery/${{action}}`, {{
+  const body = action === 'start' ? {snapshot_name: snapshot} : {};
+  const d = await fetch(base + `/api/recovery/${action}`, {
     method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(body),
-  }}).then(r => r.json());
+  }).then(r => r.json());
   showMsg(d.message, 4000);
   setTimeout(loadStatus, 2000);
-}}
+}
 
 // Initial laden
 loadStatus(); loadLog();
