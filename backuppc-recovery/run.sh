@@ -10,12 +10,24 @@ HETZNER_KEY=/data/secrets/id_ed25519_hetzner
 HETZNER_USER=$(jq -r '.hetzner_user' "$CONFIG")
 HETZNER_HOST=$(jq -r '.hetzner_host' "$CONFIG")
 HETZNER_PORT=$(jq -r '.hetzner_port // 23' "$CONFIG")
+SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
 
-echo "BackupPC Recovery startet"
-echo "  Hetzner: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
+# Quellpfad auf der Storage Box bestimmen
+if [[ -n "$SNAPSHOT_NAME" ]]; then
+  HETZNER_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
+  IMPORT_FLAG="/data/config-imported-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
+  echo "BackupPC Umgebung startet (Snapshot-Modus)"
+  echo "  Hetzner:  ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
+  echo "  Snapshot: ${SNAPSHOT_NAME}"
+else
+  HETZNER_SOURCE="/home/ZPool"
+  IMPORT_FLAG="/data/config-imported"
+  echo "BackupPC Umgebung startet (Live-Modus)"
+  echo "  Hetzner: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
+fi
 
 # SSH-Key schreiben
-mkdir -p /data/secrets
+mkdir -p /data/secrets /data/logs
 val=$(jq -r '.ssh_key_hetzner // empty' "$CONFIG")
 if [[ -z "$val" ]]; then
   echo "FEHLER: ssh_key_hetzner nicht konfiguriert" >&2
@@ -34,24 +46,24 @@ mkdir -p "$SSHFS_MOUNT"
 if ! mountpoint -q "$SSHFS_MOUNT"; then
   sshfs -p "$HETZNER_PORT" \
     -o "IdentityFile=${HETZNER_KEY},allow_other,reconnect,uid=0,gid=0,StrictHostKeyChecking=no" \
-    "${HETZNER_USER}@${HETZNER_HOST}:/home/ZPool" "$SSHFS_MOUNT"
+    "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT"
   mountpoint -q "$SSHFS_MOUNT" || { echo "FEHLER: SSHFS-Mount fehlgeschlagen" >&2; exit 1; }
-  echo "Hetzner gemountet: $SSHFS_MOUNT"
+  echo "Hetzner gemountet: $SSHFS_MOUNT (${HETZNER_SOURCE})"
 fi
 
-# BackupPC-Config von Hetzner übernehmen (einmalig)
-if [[ ! -f /data/config-imported ]]; then
-  echo "Importiere BackupPC-Config von Hetzner..."
+# BackupPC-Config übernehmen (einmalig pro Snapshot/Live-Kombination)
+if [[ ! -f "$IMPORT_FLAG" ]]; then
+  echo "Importiere BackupPC-Config..."
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." "$BACKUPPC_HOME/" 2>/dev/null || true
   # TopDir auf den SSHFS-Mount setzen
   perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
     "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
     echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
-  # Neue Sicherungen deaktivieren (Recovery-Modus)
+  # Neue Sicherungen deaktivieren
   grep -qF 'BackupsDisable' "${BACKUPPC_CONF}/config.pl" \
-    || printf '\n$Conf{BackupsDisable} = 2;  # Recovery-Modus\n' >> "${BACKUPPC_CONF}/config.pl"
-  touch /data/config-imported
+    || printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
+  touch "$IMPORT_FLAG"
   echo "Config importiert."
 fi
 
@@ -66,7 +78,7 @@ apache2ctl start 2>&1 || true
 echo "Starte BackupPC-Daemon..."
 sudo -u backuppc /usr/share/backuppc/bin/BackupPC -d >> /data/logs/backuppc.log 2>&1 &
 
-echo "BackupPC Recovery läuft."
+echo "BackupPC Umgebung läuft."
 echo "  Web-UI: http://<HA-IP>:8900/BackupPC/"
 
 # MQTT-State publizieren
