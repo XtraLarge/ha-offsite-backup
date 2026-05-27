@@ -16,8 +16,20 @@ echo "  Loki-URL:  ${LOKI_URL:-deaktiviert}"
 
 mkdir -p /data/logs /data/secrets /data/backuppc-recovery
 
-# Key-Berechtigungen korrigieren
-find /data/secrets -name 'id_ed25519_*' -exec chmod 600 {} \; 2>/dev/null || true
+# SSH-Keys + Token aus Config in Dateien schreiben (falls gesetzt)
+_write_secret() {
+  local key="$1" file="$2"
+  local val; val=$(jq -r ".$key // empty" "$CONFIG")
+  [[ -z "$val" ]] && return
+  # \n-Literale in echte Newlines umwandeln (für einzeilige Eingabe in HA-UI)
+  printf '%b' "$val" > "$file"
+  chmod 600 "$file"
+  echo "Secret $key → $file geschrieben"
+}
+_write_secret ssh_key_nas       /data/secrets/id_ed25519_nas
+_write_secret ssh_key_hetzner   /data/secrets/id_ed25519_hetzner
+_write_secret ssh_key_recovery  /data/secrets/id_ed25519_recovery
+_write_secret hetzner_token     /data/secrets/hetzner_token
 
 # Cron einrichten
 echo "$BACKUP_SCHEDULE root /scripts/backup.sh >> /data/logs/backup.log 2>&1" \

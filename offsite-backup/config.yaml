@@ -21,6 +21,10 @@ options:
   loki_url: ""
   recovery_target: "local"
   mqtt_discovery: true
+  ssh_key_nas: ""
+  ssh_key_hetzner: ""
+  ssh_key_recovery: ""
+  hetzner_token: ""
 
 schema:
   nas_host: str
@@ -33,6 +37,10 @@ schema:
   loki_url: str
   recovery_target: str
   mqtt_discovery: bool
+  ssh_key_nas: password
+  ssh_key_hetzner: password
+  ssh_key_recovery: password
+  hetzner_token: password
 
 docker_api: true
 
