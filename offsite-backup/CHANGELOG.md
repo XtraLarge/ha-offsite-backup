@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.9 - 2026-05-27
+
+### Behoben
+- Dashboard JavaScript und CSS komplett defekt wegen Python-Format-String-Escaping (`{{`/`}}` nie aufgelöst → JS-Syntaxfehler → kein einziger API-Call lief)
+- Fix: DASHBOARD_HTML nutzt jetzt normale `{`/`}` statt Python-Format-Escaping
+
 ## 1.2.8 - 2026-05-27
 
 ### Behoben
