@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.8 - 2026-05-27
+
+### Behoben
+- Dashboard-Basis-Pfad wird jetzt vom Server via `X-Ingress-Path`-Header injiziert (statt `window.location.pathname`) — behebt leere Werte im HA App-WebView und im Browser
+
 ## 1.2.7 - 2026-05-27
 
 ### Hinzugefügt
