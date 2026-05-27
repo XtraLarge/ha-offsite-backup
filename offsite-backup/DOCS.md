@@ -54,7 +54,7 @@ Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eing
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| `nas_host` | Hostname oder IP der NAS | `nas.example.invalid` |
+| `nas_host` | Hostname oder IP der NAS | `nas.example.local` |
 | `nas_user` | SSH-Benutzer auf der NAS | `root` |
 | `hetzner_user` | Hetzner Storage Box Benutzername | `u123456` |
 | `hetzner_host` | Hetzner Storage Box Hostname | `u123456.your-storagebox.de` |
