@@ -47,14 +47,16 @@ SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFil
 mkdir -p "$SSHFS_MOUNT"
 if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Mounte SSHFS: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE} → $SSHFS_MOUNT"
+  echo "FUSE-Check: /dev/fuse = $(ls -la /dev/fuse 2>&1)"
   set +e
   SSHFS_OUT=$(sshfs -p "$HETZNER_PORT" \
-    -o "${SSH_OPTS},allow_other" \
+    -o "${SSH_OPTS},allow_other,sshfs_debug,loglevel=DEBUG3" \
     "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT" 2>&1)
   SSHFS_RC=$?
   set -e
   if [[ $SSHFS_RC -ne 0 ]] || ! mountpoint -q "$SSHFS_MOUNT"; then
-    echo "FEHLER: SSHFS-Mount fehlgeschlagen (rc=$SSHFS_RC): $SSHFS_OUT" >&2
+    echo "FEHLER: SSHFS-Mount fehlgeschlagen (rc=$SSHFS_RC):"
+    echo "$SSHFS_OUT"
     exit 1
   fi
   echo "Hetzner gemountet: $SSHFS_MOUNT (${HETZNER_SOURCE})"
