@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/with-contenv bash
 set -euo pipefail
 
 CONFIG=/data/options.json
@@ -44,16 +44,6 @@ echo "Cron gestartet: $BACKUP_SCHEDULE"
 # user_allow_other für SSHFS (Recovery)
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
-
-# Supervisor-Token prüfen
-if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-  echo "SUPERVISOR_TOKEN: gesetzt (${#SUPERVISOR_TOKEN} Zeichen)"
-elif [ -n "${HASSIO_TOKEN:-}" ]; then
-  echo "HASSIO_TOKEN: gesetzt — verwende als SUPERVISOR_TOKEN"
-  export SUPERVISOR_TOKEN="$HASSIO_TOKEN"
-else
-  echo "WARNUNG: Kein Supervisor-Token verfügbar — BackupPC-Steuerung deaktiviert"
-fi
 
 # API starten
 exec python3 /api.py
