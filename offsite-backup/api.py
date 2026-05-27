@@ -418,23 +418,22 @@ DASHBOARD_HTML = """\
     <div class="row"><span class="label">NAS</span><code id="nas-host">—</code></div>
     <div class="row"><span class="label">Zeitplan</span><code id="schedule">—</code></div>
     <div class="row"><span class="label">Nächster Backup</span><span id="next-run">—</span></div>
-    <div class="row"><span class="label">Recovery</span><span id="recovery-status">—</span></div>
+    <div class="row"><span class="label">BackupPC</span><span id="recovery-status">—</span></div>
     <div class="actions">
       <button class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
       <button class="btn-secondary" onclick="loadLog()">&#8635; Log aktualisieren</button>
-      <button class="btn-secondary" onclick="loadSnapshots()">&#128190; Snapshots laden</button>
     </div>
   </div>
 
   <div class="card">
-    <h2>Recovery (BackupPC)</h2>
+    <h2>BackupPC Umgebung</h2>
     <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
-      Startet BackupPC mit Hetzner-Daten via SSHFS.<br>
-      Modus <code>local</code>: direkt auf diesem HA-RPi (kein extra Host nötig).
+      Startet die BackupPC-Oberfläche mit Hetzner-Daten via SSHFS.<br>
+      Lesezugriff auf alle Backups &mdash; keine neuen Sicherungen werden erstellt.
     </p>
     <div class="actions">
-      <button class="btn-success" onclick="triggerRecovery('start')">&#9654; Recovery starten</button>
-      <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; Recovery beenden</button>
+      <button class="btn-success" onclick="triggerRecovery('start')">&#9654; BackupPC starten</button>
+      <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; BackupPC beenden</button>
     </div>
     <div id="recovery-url" style="margin-top:.75rem;font-size:.88rem;display:none">
       BackupPC-UI: <a id="recovery-link" href="#" target="_blank"></a>
@@ -443,7 +442,10 @@ DASHBOARD_HTML = """\
 
   <div class="card">
     <h2>Hetzner Snapshots</h2>
-    <div id="snapshots-content"><em style="color:#aaa;font-size:.88rem">Klicke "Snapshots laden"</em></div>
+    <div style="margin-bottom:.75rem">
+      <button class="btn-secondary" onclick="loadSnapshots()">&#128190; Snapshots laden</button>
+    </div>
+    <div id="snapshots-content"><em style="color:#aaa;font-size:.88rem">Noch nicht geladen</em></div>
   </div>
 
   <div class="card">
@@ -455,7 +457,8 @@ DASHBOARD_HTML = """\
 <div id="msg"></div>
 
 <script>
-const base = "{INGRESS_PATH}";
+// Basis-Pfad aus aktueller URL ableiten – funktioniert mit und ohne Ingress-Prefix
+const base = window.location.pathname.replace(/\/$/, '');
 
 function showMsg(text, dur=3000) {{
   const el = document.getElementById('msg');
@@ -528,7 +531,7 @@ async function triggerBackup() {{
 
 async function triggerRecovery(action) {{
   const label = action === 'start' ? 'starten' : 'beenden';
-  if (!confirm(`Recovery ${{label}}?`)) return;
+  if (!confirm(`BackupPC Umgebung ${{label}}?`)) return;
   const d = await fetch(base + `/api/recovery/${{action}}`, {{method:'POST'}}).then(r => r.json());
   showMsg(d.message, 4000);
   setTimeout(loadStatus, 2000);
@@ -544,12 +547,23 @@ setInterval(loadLog, 30000);
 """
 
 
+def _normalize_path(raw):
+    """Strip ingress prefix and extract the meaningful route segment."""
+    p = raw.split("?")[0]
+    if INGRESS_PATH and p.startswith(INGRESS_PATH):
+        p = p[len(INGRESS_PATH):]
+    # If the ingress prefix was not stripped (INGRESS_PATH=""), extract /api/... from any prefix
+    if "/api/" in p:
+        p = "/api/" + p.split("/api/", 1)[1]
+    return p.rstrip("/") or "/"
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        path = self.path.removeprefix(INGRESS_PATH).split("?")[0].rstrip("/") or "/"
+        path = _normalize_path(self.path)
 
         if path == "/":
-            html = DASHBOARD_HTML.replace("{INGRESS_PATH}", INGRESS_PATH)
+            html = DASHBOARD_HTML
             self._html(html)
         elif path == "/api/status":
             s = read_status()
@@ -574,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "Not found"}, 404)
 
     def do_POST(self):
-        path = self.path.removeprefix(INGRESS_PATH).split("?")[0].rstrip("/")
+        path = _normalize_path(self.path)
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
 
