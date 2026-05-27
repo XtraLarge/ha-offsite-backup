@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3 - 2026-05-27
+
+### Behoben
+- AppArmor deaktiviert (`apparmor: false`) — blockierte SSHFS-Mount für Recovery
+
 ## 1.2.2 - 2026-05-27
 
 ### Behoben
