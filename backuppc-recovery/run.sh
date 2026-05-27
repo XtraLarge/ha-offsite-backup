@@ -41,20 +41,7 @@ echo "Hetzner SSH-Key geschrieben."
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
 
-SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,ConnectTimeout=15,BatchMode=yes"
-
-# SFTP-Verbindungstest (Hetzner Storage Box ist SFTP-only)
-echo "SFTP-Verbindungstest zu ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}..."
-set +e
-SFTP_OUT=$(echo "ls /" | sftp -P "$HETZNER_PORT" -o "$SSH_OPTS" "${HETZNER_USER}@${HETZNER_HOST}" 2>&1)
-SFTP_RC=$?
-set -e
-if [[ $SFTP_RC -ne 0 ]]; then
-  echo "SFTP-Test fehlgeschlagen (rc=$SFTP_RC):"
-  echo "$SFTP_OUT"
-  exit 1
-fi
-echo "SFTP OK: $(echo "$SFTP_OUT" | grep -v '^sftp' | head -3)"
+SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,GlobalKnownHostsFile=/dev/null,ConnectTimeout=15"
 
 # Hetzner SSHFS mounten
 mkdir -p "$SSHFS_MOUNT"
