@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.22 - 2026-05-27
+
+### Geändert
+- BackupPC-Steuerung nutzt jetzt SUPERVISOR_TOKEN direkt (`hassio_role: manager`) mit `http://supervisor/` — LLAT hatte keine Berechtigung für Supervisor-API
+- `ha_token`-Option entfernt (nicht mehr benötigt)
+- `backuppc_port` (Standard: 8900) konfigurierbar — steuert die URL des "BackupPC UI öffnen"-Buttons
+- Dashboard: "BackupPC UI öffnen"-Button erscheint wenn BackupPC läuft (öffnet neues Tab)
+- `/api/options` gibt keine sensiblen Felder mehr zurück (SSH-Keys, Tokens, MQTT-Passwort)
+
 ## 1.2.21 - 2026-05-27
 
 ### Behoben

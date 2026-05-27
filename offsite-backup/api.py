@@ -54,13 +54,12 @@ def is_backup_running():
 
 
 def _supervisor_request(method, path, body=None):
-    opts = read_options()
-    token = opts.get("ha_token", "").strip()
+    token = os.environ.get("SUPERVISOR_TOKEN", "").strip()
     if not token:
-        raise RuntimeError("ha_token nicht konfiguriert")
+        raise RuntimeError("SUPERVISOR_TOKEN nicht verfügbar")
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(
-        f"http://homeassistant:8123/api/hassio{path}",
+        f"http://supervisor{path}",
         data=data,
         method=method,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
@@ -455,9 +454,7 @@ DASHBOARD_HTML = """\
     <div class="actions">
       <button class="btn-success" onclick="triggerRecovery('start')">&#9654; BackupPC starten</button>
       <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; BackupPC beenden</button>
-    </div>
-    <div id="recovery-url" style="margin-top:.75rem;font-size:.88rem;display:none">
-      BackupPC-UI: <a id="recovery-link" href="#" target="_blank"></a>
+      <button id="recovery-open-btn" class="btn-primary" onclick="openRecoveryUI()" style="display:none">&#10548; BackupPC UI öffnen</button>
     </div>
   </div>
 
@@ -515,15 +512,15 @@ async function loadStatus() {
     document.getElementById('next-run').textContent = fmtDate(s.next_run);
 
     const rec = document.getElementById('recovery-status');
+    const openBtn = document.getElementById('recovery-open-btn');
     if (s.recovery_running) {
       rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>läuft</span>';
-      const url = `http://${location.hostname}:8900`;
-      document.getElementById('recovery-url').style.display = 'block';
-      document.getElementById('recovery-link').href = url;
-      document.getElementById('recovery-link').textContent = url;
+      const port = o.backuppc_port || 8900;
+      openBtn.dataset.url = `http://${location.hostname}:${port}`;
+      openBtn.style.display = 'inline-block';
     } else {
       rec.innerHTML = '<span class="badge badge-unbekannt">inaktiv</span>';
-      document.getElementById('recovery-url').style.display = 'none';
+      openBtn.style.display = 'none';
     }
   } catch(e) { console.error(e); }
 }
@@ -581,6 +578,11 @@ async function triggerRecovery(action) {
   setTimeout(loadStatus, 2000);
 }
 
+function openRecoveryUI() {
+  const url = document.getElementById('recovery-open-btn').dataset.url;
+  if (url) window.open(url, '_blank');
+}
+
 // Initial laden
 loadStatus(); loadLog(); loadSnapshots();
 setInterval(loadStatus, 15000);
@@ -625,7 +627,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(s)
         elif path == "/api/options":
             opts = read_options()
-            safe = {k: v for k, v in opts.items() if k not in ("hetzner_user", "hetzner_host", "hetzner_box_id")}
+            _hidden = {"hetzner_user", "hetzner_host", "hetzner_box_id",
+                       "ssh_key_nas", "ssh_key_hetzner", "ssh_key_recovery",
+                       "hetzner_token", "mqtt_password"}
+            safe = {k: v for k, v in opts.items() if k not in _hidden}
             self._json(safe)
         elif path == "/api/log":
             self._json({"lines": read_log()})
@@ -679,8 +684,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
-    if not read_options().get("ha_token", "").strip():
-        log.warning("ha_token nicht konfiguriert — BackupPC-Steuerung nicht verfügbar")
+    if not os.environ.get("SUPERVISOR_TOKEN"):
+        log.warning("SUPERVISOR_TOKEN nicht verfügbar — BackupPC-Steuerung deaktiviert")
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
