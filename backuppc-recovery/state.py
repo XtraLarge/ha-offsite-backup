@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Publiziert BackupPC-Recovery-Status via MQTT Auto-Discovery."""
+"""Publiziert BackupPC-Umgebungs-Status via MQTT Auto-Discovery."""
 import json
 import logging
 import os
 import subprocess
 import time
-
-import urllib.request
 
 OPTIONS_FILE = "/data/options.json"
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -23,10 +21,7 @@ def read_options():
 
 def backuppc_running():
     try:
-        result = subprocess.run(
-            ["pgrep", "-f", "BackupPC"],
-            capture_output=True,
-        )
+        result = subprocess.run(["pgrep", "-f", "BackupPC"], capture_output=True)
         return result.returncode == 0
     except Exception:
         return False
@@ -34,14 +29,14 @@ def backuppc_running():
 
 DEVICE = {
     "identifiers": ["backuppc_recovery"],
-    "name": "BackupPC Recovery",
+    "name": "BackupPC Umgebung",
     "model": "HA Add-on v1.0",
     "manufacturer": "XtraLarge",
 }
 
 DISCOVERY_ENTITIES = [
     ("binary_sensor", "backuppc_recovery_running", {
-        "name": "BackupPC Recovery aktiv",
+        "name": "BackupPC Umgebung aktiv",
         "state_topic": "backuppc_recovery/state",
         "value_template": "{{ value_json.running }}",
         "payload_on": "True",
@@ -54,6 +49,12 @@ DISCOVERY_ENTITIES = [
         "state_topic": "backuppc_recovery/state",
         "value_template": "{{ value_json.url }}",
         "icon": "mdi:web",
+    }),
+    ("sensor", "backuppc_recovery_source", {
+        "name": "BackupPC Datenquelle",
+        "state_topic": "backuppc_recovery/state",
+        "value_template": "{{ value_json.source }}",
+        "icon": "mdi:database-clock",
     }),
 ]
 
@@ -74,7 +75,6 @@ def start_mqtt(opts):
         client.connect(host, int(opts.get("mqtt_port", 1883)), keepalive=60)
         client.loop_start()
 
-        # Auto-Discovery
         for entity_type, uid, config in DISCOVERY_ENTITIES:
             payload = dict(config)
             payload["unique_id"] = uid
@@ -88,12 +88,13 @@ def start_mqtt(opts):
         return None
 
 
-def publish_state(client, url):
+def publish_state(client, url, source):
     if not client:
         return
     state = {
-        "running": backuppc_running(),
+        "running": str(backuppc_running()),
         "url": url,
+        "source": source,
     }
     client.publish("backuppc_recovery/state",
                    json.dumps(state, ensure_ascii=False), retain=True)
@@ -103,19 +104,21 @@ if __name__ == "__main__":
     time.sleep(5)
     opts = read_options()
 
-    # Host-IP für die URL ermitteln
+    snapshot_name = opts.get("snapshot_name", "").strip()
+    source = f"Snapshot: {snapshot_name}" if snapshot_name else "Live-Daten"
+
     try:
         import socket
-        hostname = socket.gethostname()
-        url = f"http://<HA-IP>:8900/BackupPC/"
+        ip = socket.gethostbyname(socket.gethostname())
     except Exception:
-        url = "http://<HA-IP>:8900/BackupPC/"
+        ip = "<HA-IP>"
+    url = f"http://{ip}:8900/BackupPC/"
 
     client = start_mqtt(opts)
 
     while True:
         try:
-            publish_state(client, url)
+            publish_state(client, url, source)
         except Exception as e:
             log.warning("State-Publish Fehler: %s", e)
         time.sleep(30)

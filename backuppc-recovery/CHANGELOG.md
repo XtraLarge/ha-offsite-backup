@@ -1,3 +1,10 @@
+## 1.0.1
+
+- Snapshot-Modus: `snapshot_name` Option; leer = Live-Daten, sonst Zugriff auf `/home/.snapshots/<name>/ZPool`
+- Config-Import-Flag jetzt snapshot-spezifisch (Neuimport bei Snapshot-Wechsel)
+- MQTT-Sensor "BackupPC Datenquelle" zeigt ob Live oder welcher Snapshot aktiv
+- Logos und Icons hinzugefügt
+
 ## 1.0.0
 
 - Erstveröffentlichung: BackupPC4 Recovery-Umgebung als eigenständiges HA Add-on

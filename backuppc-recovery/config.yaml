@@ -1,5 +1,5 @@
 name: BackupPC Recovery
-version: "1.0.0"
+version: "1.0.1"
 slug: backuppc_recovery
 description: BackupPC4 Recovery-Umgebung via Hetzner Storage Box (SSHFS). Nur bei Bedarf starten.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -14,6 +14,7 @@ options:
   hetzner_user: ""
   hetzner_host: ""
   hetzner_port: 23
+  snapshot_name: ""
   mqtt_host: ""
   mqtt_port: 1883
   mqtt_user: ""
@@ -24,6 +25,7 @@ schema:
   hetzner_user: str
   hetzner_host: str
   hetzner_port: int
+  snapshot_name: str
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str
