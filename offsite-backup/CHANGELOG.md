@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.10 - 2026-05-27
+
+### Geändert
+- Hetzner Snapshots werden beim Seitenaufruf automatisch geladen
+- Button umbenannt zu "Snapshots aktualisieren"
+
 ## 1.2.9 - 2026-05-27
 
 ### Behoben
