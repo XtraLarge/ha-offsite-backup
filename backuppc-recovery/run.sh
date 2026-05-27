@@ -92,16 +92,15 @@ perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
 printf '\n$Conf{CgiAdminUsers} = "backuppc";\n' >> "${BACKUPPC_CONF}/config.pl"
 
 # Apache BackupPC-Route konfigurieren (a2enconf backuppc schlägt im Build fehl)
+# Kein Passwort-Schutz: Port 8900 ist nur im lokalen Netz erreichbar.
+# SetEnv REMOTE_USER=backuppc setzt den Admin-User direkt im CGI-Environment.
 cat > /etc/apache2/conf-available/backuppc-recovery.conf << 'APACHEEOF'
 ScriptAlias /BackupPC /usr/share/backuppc/cgi-bin/BackupPC_Admin
 
 <Directory /usr/share/backuppc/cgi-bin>
     Options ExecCGI FollowSymlinks
     AllowOverride None
-    AuthType Basic
-    AuthName "BackupPC Recovery"
-    AuthUserFile /etc/backuppc/htpasswd
-    Require valid-user
+    Require all granted
 </Directory>
 
 Alias /BackupPC-static /usr/share/backuppc/html
@@ -110,9 +109,10 @@ Alias /BackupPC-static /usr/share/backuppc/html
     AllowOverride None
     Require all granted
 </Directory>
+
+SetEnv REMOTE_USER backuppc
 APACHEEOF
 
-htpasswd -bc /etc/backuppc/htpasswd backuppc backuppc 2>/dev/null || true
 a2enconf backuppc-recovery 2>/dev/null || true
 a2enmod cgi 2>/dev/null || true
 

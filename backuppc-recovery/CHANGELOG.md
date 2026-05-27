@@ -1,3 +1,9 @@
+## 1.0.8
+
+- Apache: Authentifizierung entfernt (`htpasswd` fehlt im Image, `apache2-utils` nicht installiert → 403)
+- `SetEnv REMOTE_USER backuppc` setzt Admin-User direkt im CGI-Environment — kein Login nötig
+- Port 8900 ist nur im lokalen Netz erreichbar (kein Passwort-Schutz erforderlich)
+
 ## 1.0.7
 
 - Apache BackupPC-Route explizit in `run.sh` konfiguriert — `a2enconf backuppc` schlug im Dockerfile-Build lautlos fehl, `/BackupPC/` lieferte 404
