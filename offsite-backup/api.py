@@ -682,6 +682,7 @@ if __name__ == "__main__":
     log.info("Supervisor-Token: %s", "verfügbar" if _sv_token else "NICHT VERFÜGBAR")
     _token_keys = [k for k in os.environ if any(x in k.upper() for x in ("TOKEN", "HASSIO", "SUPERVISOR", "SECRET"))]
     log.info("Token-Env-Vars vorhanden: %s", _token_keys or "keine")
+    log.info("Alle Env-Vars: %s", sorted(os.environ.keys()))
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
