@@ -1,3 +1,9 @@
+## 1.0.5
+
+- SSH-Key-Schreiben: `jq -r ... > file` statt `printf '%b'` — Command-Substitution `$()` schneidet abschließenden Zeilenumbruch ab, wodurch libcrypto den Key nicht laden konnte (`error in libcrypto`)
+- SSHFS-Debug-Flags (`sshfs_debug`, `loglevel=DEBUG3`) entfernt
+- Validierung: PEM-Header-Check nach Key-Schreiben
+
 ## 1.0.3
 
 - `GlobalKnownHostsFile=/dev/null` ergänzt — System-known_hosts blockierte SSHFS-Verbindung zu Hetzner (Host key verification failed)

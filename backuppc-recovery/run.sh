@@ -28,14 +28,17 @@ fi
 
 # SSH-Key schreiben
 mkdir -p /data/secrets /data/logs
-val=$(jq -r '.ssh_key_hetzner // empty' "$CONFIG")
-if [[ -z "$val" ]]; then
+if [[ "$(jq -r '.ssh_key_hetzner // empty' "$CONFIG")" == "" ]]; then
   echo "FEHLER: ssh_key_hetzner nicht konfiguriert" >&2
   exit 1
 fi
-printf '%b' "$val" > "$HETZNER_KEY"
+jq -r '.ssh_key_hetzner' "$CONFIG" > "$HETZNER_KEY"
 chmod 600 "$HETZNER_KEY"
-echo "Hetzner SSH-Key geschrieben."
+if ! head -1 "$HETZNER_KEY" | grep -q 'BEGIN'; then
+  echo "FEHLER: SSH-Key-Datei ungültig (kein PEM-Header)" >&2
+  exit 1
+fi
+echo "Hetzner SSH-Key geschrieben ($(wc -l < "$HETZNER_KEY") Zeilen)."
 
 # user_allow_other für SSHFS
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
@@ -50,7 +53,7 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "FUSE-Check: /dev/fuse = $(ls -la /dev/fuse 2>&1)"
   set +e
   SSHFS_OUT=$(sshfs -p "$HETZNER_PORT" \
-    -o "${SSH_OPTS},allow_other,sshfs_debug,loglevel=DEBUG3" \
+    -o "${SSH_OPTS},allow_other" \
     "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT" 2>&1)
   SSHFS_RC=$?
   set -e
