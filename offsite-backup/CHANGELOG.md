@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.12 - 2026-05-27
+
+### Behoben
+- `HASSIO_TOKEN` als Fallback für ältere HA-Versionen ergänzt (war vorher nur `SUPERVISOR_TOKEN`)
+- Startup-Log zeigt ob Supervisor-Token verfügbar ist
+
 ## 1.2.11 - 2026-05-27
 
 ### Geändert

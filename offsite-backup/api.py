@@ -54,7 +54,7 @@ def is_backup_running():
 
 
 def _supervisor_request(method, path, body=None):
-    token = os.environ.get("SUPERVISOR_TOKEN")
+    token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
     if not token:
         raise RuntimeError("SUPERVISOR_TOKEN nicht verfügbar")
     data = json.dumps(body).encode() if body else None
@@ -678,6 +678,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
+    _sv_token = os.environ.get("SUPERVISOR_TOKEN") or os.environ.get("HASSIO_TOKEN")
+    log.info("Supervisor-Token: %s", "verfügbar" if _sv_token else "NICHT VERFÜGBAR")
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
