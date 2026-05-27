@@ -1,9 +1,7 @@
 name: Offsite Backup
 version: "1.0.0"
 slug: offsite_backup
-description: >
-  Offsite Backup via Hetzner Storage Box (rsync + ZFS Snapshot).
-  Ersetzt rsyncos. Unterstützt BackupPC-Recovery direkt auf Home Assistant (lokal) oder per SSH auf einem Remote-Docker-Host.
+description: Offsite Backup via Hetzner Storage Box (rsync + ZFS Snapshot) mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
 arch:
   - aarch64
@@ -33,20 +31,13 @@ schema:
   hetzner_box_id: int
   backup_schedule: str
   loki_url: str
-  # "local" → BackupPC via Docker-Socket auf HA-RPi
-  # IP/Hostname → SSH zu Remote-Docker-Host
   recovery_target: str
   mqtt_discovery: bool
 
-# Docker-Socket für lokale Recovery (BackupPC-Container starten)
 docker_api: true
 
-# /dev/fuse für SSHFS (Hetzner-Mount in Recovery)
 devices:
   - /dev/fuse
-
-map:
-  - ssl:false
 
 ports:
   8099/tcp: null

@@ -1,1 +1,3 @@
-channel: stable
+name: "XtraLarge Offsite Backup"
+url: "https://github.com/XtraLarge/ha-offsite-backup"
+maintainer: "XtraLarge"
