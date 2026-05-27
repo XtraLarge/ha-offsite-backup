@@ -1,5 +1,5 @@
 name: BackupPC Recovery
-version: "2.0.2"
+version: "2.0.3"
 slug: backuppc_recovery
 description: BackupPC4 Recovery-Umgebung via Hetzner Storage Box (SSHFS). Nur bei Bedarf starten.
 url: https://github.com/XtraLarge/ha-offsite-backup
