@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.25 - 2026-05-27
+
+### Debug
+- `/api/debug/env` Endpunkt zum Diagnostizieren der Token-Injektion
+
 ## 1.2.24 - 2026-05-27
 
 ### Behoben
