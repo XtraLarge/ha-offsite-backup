@@ -1,7 +1,7 @@
 name: Offsite Backup
-version: "1.2.30"
+version: "1.2.31"
 slug: offsite_backup
-description: Offsite Backup via Hetzner Storage Box (rsync + ZFS Snapshot) mit BackupPC-Recovery direkt auf Home Assistant.
+description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
 arch:
   - aarch64
@@ -11,45 +11,41 @@ arch:
 init: false
 
 options:
-  nas_host: ""
-  nas_user: "root"
-  hetzner_user: ""
-  hetzner_host: ""
-  hetzner_port: 23
-  hetzner_box_id: 0
+  zfs_storage_host: ""
+  zfs_storage_user: "root"
+  offsite_user: ""
+  offsite_host: ""
+  offsite_port: 23
+  offsite_box_id: 0
   backup_schedule: "0 20 * * 3"
   loki_url: ""
-  recovery_target: "local"
   mqtt_discovery: true
   mqtt_host: ""
   mqtt_port: 1883
   mqtt_user: ""
   mqtt_password: ""
-  ssh_key_nas: ""
-  ssh_key_hetzner: ""
-  ssh_key_recovery: ""
-  hetzner_token: ""
+  ssh_key_storage: ""
+  ssh_key_offsite: ""
+  offsite_token: ""
   backuppc_port: 8080
 
 schema:
-  nas_host: str
-  nas_user: str
-  hetzner_user: str
-  hetzner_host: str
-  hetzner_port: int
-  hetzner_box_id: int
+  zfs_storage_host: str
+  zfs_storage_user: str
+  offsite_user: str
+  offsite_host: str
+  offsite_port: int
+  offsite_box_id: int
   backup_schedule: str
   loki_url: str
-  recovery_target: str
   mqtt_discovery: bool
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str
   mqtt_password: password
-  ssh_key_nas: password
-  ssh_key_hetzner: password
-  ssh_key_recovery: password
-  hetzner_token: password
+  ssh_key_storage: password
+  ssh_key_offsite: password
+  offsite_token: password
   backuppc_port: int
 
 docker_api: true
