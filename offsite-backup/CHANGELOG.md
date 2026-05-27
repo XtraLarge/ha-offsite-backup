@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.6 - 2026-05-27
+
+### Behoben
+- `Cache-Control: no-store` auf HTML-Antwort — Browser/App cached die Seite nicht mehr
+- `_normalize_path()` matcht API-Routen jetzt als exaktes Suffix statt `/api/`-Split (korrekt auch wenn Ingress-Pfad selbst `/api/` enthält)
+
 ## 1.2.5 - 2026-05-27
 
 ### Behoben
