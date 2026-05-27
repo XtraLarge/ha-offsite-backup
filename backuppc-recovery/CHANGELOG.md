@@ -2,7 +2,7 @@
 
 **Kompletter Umbau** — Basis-Image gewechselt auf `adferrand/backuppc:4.4.0-12`
 
-- Basis: `adferrand/backuppc:4.4.0-12` (Alpine + lighttpd) statt Debian-Paket — gleiche Basis wie rsyncos Recovery-Umgebung
+- Basis: `adferrand/backuppc:4.4.0-12` (Alpine + lighttpd) statt Debian-Paket — gleiche Basis wie die produktive BackupPC4-Umgebung
 - Port: **8080** statt 8900
 - Web-UI URL: `/BackupPC_Admin` statt `/BackupPC/`
 - lighttpd statt Apache — kein Auth-Problem, kein `a2enconf`-Problem

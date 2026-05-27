@@ -54,10 +54,10 @@ Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eing
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| `nas_host` | Hostname oder IP der NAS | `nas.fritz.box` |
+| `nas_host` | Hostname oder IP der NAS | `nas.example.local` |
 | `nas_user` | SSH-Benutzer auf der NAS | `root` |
-| `hetzner_user` | Hetzner Storage Box Benutzername | `u527284` |
-| `hetzner_host` | Hetzner Storage Box Hostname | `u527284.your-storagebox.de` |
+| `hetzner_user` | Hetzner Storage Box Benutzername | `u123456` |
+| `hetzner_host` | Hetzner Storage Box Hostname | `u123456.your-storagebox.de` |
 | `hetzner_port` | SSH-Port der Storage Box | `23` |
 | `hetzner_box_id` | Numerische Storage Box ID | `510043` |
 | `backup_schedule` | Cron-Ausdruck (Container-Zeit = UTC) | `0 18 * * 3` |

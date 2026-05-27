@@ -38,12 +38,12 @@ Das Add-on kann auch eigenständig konfiguriert und gestartet werden. Alle Felde
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| `hetzner_user` | Hetzner Storage Box Benutzername | `u527284` |
-| `hetzner_host` | Hetzner Storage Box Hostname | `u527284.your-storagebox.de` |
+| `hetzner_user` | Hetzner Storage Box Benutzername | `u123456` |
+| `hetzner_host` | Hetzner Storage Box Hostname | `u123456.your-storagebox.de` |
 | `hetzner_port` | SSH-Port (Standard: 23) | `23` |
-| `snapshot_name` | Snapshot-Name für Datenzugriff (leer = Live) | `Snap_2026-05-20` |
+| `snapshot_name` | Snapshot-Name für Datenzugriff (leer = Live) | `Snap_YYYY-MM-DD` |
 | `ssh_key_hetzner` | Privater SSH-Key für Hetzner Storage Box | (mehrzeilig) |
-| `mqtt_host` | MQTT-Broker (optional) | `10.10.11.30` |
+| `mqtt_host` | MQTT-Broker (optional) | `192.168.1.10` |
 | `mqtt_port` | MQTT-Port | `1883` |
 | `mqtt_user` | MQTT-Benutzer | |
 | `mqtt_password` | MQTT-Passwort | |

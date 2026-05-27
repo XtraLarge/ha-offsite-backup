@@ -12,7 +12,7 @@ Home Assistant Custom Add-on Repository für **Offsite Backup via Hetzner Storag
 ## Architektur
 
 ```
-Home Assistant (Add-on)           NAS (nas.fritz.box)          Hetzner Storage Box
+Home Assistant (Add-on)           NAS (nas.example.local)      Hetzner Storage Box
 ┌──────────────────────┐  SSH     ┌──────────────────┐  rsync  ┌──────────────────┐
 │  Offsite Backup      │─────────▶│  backup_nas.sh   │────────▶│  /home/ZPool/    │
 │  • Cron-Scheduler    │  Pipe    │  • ZFS Snapshot  │         │  BackupPC/       │
