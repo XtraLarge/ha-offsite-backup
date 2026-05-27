@@ -3,3 +3,10 @@ build_from:
   amd64: ghcr.io/home-assistant/amd64-base-debian:bookworm
   armhf: ghcr.io/home-assistant/armhf-base-debian:bookworm
   armv7: ghcr.io/home-assistant/armv7-base-debian:bookworm
+
+squash: false
+labels:
+  org.opencontainers.image.title: "Offsite Backup"
+  org.opencontainers.image.description: "rsync Offsite Backup via Hetzner Storage Box"
+  org.opencontainers.image.source: "https://github.com/XtraLarge/ha-offsite-backup"
+  org.opencontainers.image.licenses: "MIT"

@@ -1,0 +1,25 @@
+# Changelog
+
+## 1.1.0 - 2026-05-27
+
+### Hinzugefügt
+- SSH-Keys und Hetzner-Token als `password`-Felder in der Add-on-Konfiguration
+- `run.sh` schreibt Secrets beim Start als Dateien nach `/data/secrets/`
+- MQTT Auto-Discovery: Sensoren, Binary-Sensoren, Button und Switch für Home Assistant
+- `next_run` Berechnung via `croniter` (nächste geplante Ausführung)
+- Fortschrittsanzeige via Log-Parsing (`ZFS Snapshot`, `rsync BackupPC Pool (1/3)` etc.)
+- GitHub Actions: Add-on-Linter und ShellCheck
+
+### Geändert
+- `repository.yaml`: Korrektes Format (`name`, `url`, `maintainer`)
+- `config.yaml`: Schema bereinigt, ungültiges `map: ssl:false` entfernt
+
+## 1.0.0 - 2026-05-27
+
+### Erstveröffentlichung
+- Offsite Backup via rsync + ZFS Snapshot → Hetzner Storage Box
+- Hetzner API Snapshot nach jedem Backup
+- BackupPC Recovery lokal (Docker-Socket) oder remote (SSH)
+- Web-Dashboard mit Status, Log und Snapshot-Übersicht
+- Cron-Scheduler konfigurierbar
+- Loki-Logging optional
