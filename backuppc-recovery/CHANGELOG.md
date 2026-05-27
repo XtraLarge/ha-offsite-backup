@@ -1,3 +1,17 @@
+## 2.0.0
+
+**Kompletter Umbau** — Basis-Image gewechselt auf `adferrand/backuppc:4.4.0-12`
+
+- Basis: `adferrand/backuppc:4.4.0-12` (Alpine + lighttpd) statt Debian-Paket — gleiche Basis wie rsyncos Recovery-Umgebung
+- Port: **8080** statt 8900
+- Web-UI URL: `/BackupPC_Admin` statt `/BackupPC/`
+- lighttpd statt Apache — kein Auth-Problem, kein `a2enconf`-Problem
+- `REMOTE_USER=backuppc` via lighttpd `setenv.add-environment`
+- `BACKUPPC_HOME` korrigiert: `/home/backuppc` statt `/var/lib/backuppc`
+- BackupPC-Daemon: `/usr/local/BackupPC/bin/BackupPC` via supervisord
+- Import-Flag umbenannt auf `config-imported-v2` (erzwingt frischen Import bei Upgrade)
+- `ENTRYPOINT ["/run.sh"]` überschreibt adferrand-Entrypoint explizit
+
 ## 1.0.8
 
 - Apache: Authentifizierung entfernt (`htpasswd` fehlt im Image, `apache2-utils` nicht installiert → 403)

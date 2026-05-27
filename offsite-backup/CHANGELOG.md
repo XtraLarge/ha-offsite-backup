@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.28 - 2026-05-27
+
+### Geändert
+- `backuppc_port` Default von 8900 → **8080** (BackupPC Recovery v2.0 läuft jetzt auf Port 8080)
+- Hinweis: Wer bereits `backuppc_port: 8900` konfiguriert hat, muss das in den Add-on-Optionen auf 8080 ändern
+
 ## 1.2.27 - 2026-05-27
 
 ### Behoben
