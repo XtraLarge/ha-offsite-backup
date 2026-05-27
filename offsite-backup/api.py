@@ -463,7 +463,7 @@ DASHBOARD_HTML = """\
   <div class="card">
     <h2>Hetzner Snapshots</h2>
     <div style="margin-bottom:.75rem">
-      <button class="btn-secondary" onclick="loadSnapshots()">&#128190; Snapshots laden</button>
+      <button class="btn-secondary" onclick="loadSnapshots()">&#128190; Snapshots aktualisieren</button>
     </div>
     <div id="snapshots-content"><em style="color:#aaa;font-size:.88rem">Noch nicht geladen</em></div>
   </div>
@@ -574,7 +574,7 @@ async function triggerRecovery(action) {
 }
 
 // Initial laden
-loadStatus(); loadLog();
+loadStatus(); loadLog(); loadSnapshots();
 setInterval(loadStatus, 15000);
 setInterval(loadLog, 30000);
 </script>
