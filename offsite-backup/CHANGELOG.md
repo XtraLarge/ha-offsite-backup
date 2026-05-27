@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.7 - 2026-05-27
+
+### Hinzugefügt
+- Snapshot-Auswahl direkt im Dashboard: Dropdown "Datenquelle" im BackupPC-Umgebung-Card; wird beim Laden der Hetzner-Snapshots automatisch befüllt
+- "BackupPC starten" übergibt die Auswahl per Supervisor API an backuppc-recovery (inkl. Hetzner-Zugangsdaten) — keine separate Konfiguration in backuppc-recovery nötig
+- Bestätigungsdialog zeigt gewählte Datenquelle an
+
 ## 1.2.6 - 2026-05-27
 
 ### Behoben

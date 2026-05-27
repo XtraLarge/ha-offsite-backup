@@ -137,9 +137,23 @@ def _run_backup():
         _mqtt_client.publish_state()
 
 
-def trigger_recovery(action):
+def trigger_recovery(action, snapshot_name=""):
     try:
         if action == "start":
+            opts = read_options()
+            _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/options", {
+                "options": {
+                    "hetzner_user":    opts.get("hetzner_user", ""),
+                    "hetzner_host":    opts.get("hetzner_host", ""),
+                    "hetzner_port":    int(opts.get("hetzner_port", 23)),
+                    "snapshot_name":   snapshot_name,
+                    "mqtt_host":       opts.get("mqtt_host", ""),
+                    "mqtt_port":       int(opts.get("mqtt_port", 1883)),
+                    "mqtt_user":       opts.get("mqtt_user", ""),
+                    "mqtt_password":   opts.get("mqtt_password", ""),
+                    "ssh_key_hetzner": opts.get("ssh_key_hetzner", ""),
+                }
+            })
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/start")
         else:
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/stop")
@@ -431,6 +445,12 @@ DASHBOARD_HTML = """\
       Startet die BackupPC-Oberfläche mit Hetzner-Daten via SSHFS.<br>
       Lesezugriff auf alle Backups &mdash; keine neuen Sicherungen werden erstellt.
     </p>
+    <div class="row" style="margin-bottom:.5rem">
+      <span class="label">Datenquelle</span>
+      <select id="snapshot-select" style="flex:1;padding:.4rem .6rem;border:1px solid #ddd;border-radius:6px;font-size:.88rem;background:#fff">
+        <option value="">Live-Daten (aktuell)</option>
+      </select>
+    </div>
     <div class="actions">
       <button class="btn-success" onclick="triggerRecovery('start')">&#9654; BackupPC starten</button>
       <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; BackupPC beenden</button>
@@ -519,6 +539,14 @@ async function loadSnapshots() {{
     el.innerHTML = '<table><thead><tr><th>Name</th><th>Erstellt</th><th>Beschreibung</th></tr></thead><tbody>'
       + snaps.map(s => `<tr><td><code>${{s.name||''}}</code></td><td>${{(s.created||'').slice(0,19)}}</td><td>${{s.description||''}}</td></tr>`).join('')
       + '</tbody></table>';
+    // Dropdown in BackupPC-Card befüllen
+    const sel = document.getElementById('snapshot-select');
+    if (sel) {{
+      const prev = sel.value;
+      sel.innerHTML = '<option value="">Live-Daten (aktuell)</option>'
+        + snaps.map(s => `<option value="${{s.name||''}}">${{s.name||''}} &mdash; ${{(s.created||'').slice(0,10)}}</option>`).join('');
+      if (prev) sel.value = prev;
+    }}
   }} catch(e) {{ el.innerHTML = `<span style="color:red">Fehler: ${{e}}</span>`; }}
 }}
 
@@ -530,9 +558,18 @@ async function triggerBackup() {{
 }}
 
 async function triggerRecovery(action) {{
+  const sel = document.getElementById('snapshot-select');
+  const snapshot = sel ? sel.value : '';
   const label = action === 'start' ? 'starten' : 'beenden';
-  if (!confirm(`BackupPC Umgebung ${{label}}?`)) return;
-  const d = await fetch(base + `/api/recovery/${{action}}`, {{method:'POST'}}).then(r => r.json());
+  const src = (action === 'start') ? (snapshot ? `Snapshot: ${{snapshot}}` : 'Live-Daten') : '';
+  const msg = src ? `BackupPC Umgebung ${{label}}?\n\nDatenquelle: ${{src}}` : `BackupPC Umgebung ${{label}}?`;
+  if (!confirm(msg)) return;
+  const body = action === 'start' ? {{snapshot_name: snapshot}} : {{}};
+  const d = await fetch(base + `/api/recovery/${{action}}`, {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify(body),
+  }}).then(r => r.json());
   showMsg(d.message, 4000);
   setTimeout(loadStatus, 2000);
 }}
@@ -602,7 +639,7 @@ class Handler(BaseHTTPRequestHandler):
             ok_flag, msg = trigger_backup()
             self._json({"ok": ok_flag, "message": msg})
         elif path == "/api/recovery/start":
-            ok_flag, msg = trigger_recovery("start")
+            ok_flag, msg = trigger_recovery("start", body.get("snapshot_name", ""))
             self._json({"ok": ok_flag, "message": msg})
         elif path == "/api/recovery/stop":
             ok_flag, msg = trigger_recovery("stop")
