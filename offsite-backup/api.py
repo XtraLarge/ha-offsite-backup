@@ -303,6 +303,16 @@ class MQTTClient:
 
 
 def _get_mqtt_credentials():
+    opts = read_options()
+    host = opts.get("mqtt_host", "").strip()
+    if host:
+        return (
+            host,
+            int(opts.get("mqtt_port", 1883)),
+            opts.get("mqtt_user", ""),
+            opts.get("mqtt_password", ""),
+        )
+
     supervisor_token = os.environ.get("SUPERVISOR_TOKEN")
     if supervisor_token:
         try:
@@ -321,12 +331,6 @@ def _get_mqtt_credentials():
         except Exception as e:
             log.warning("Supervisor MQTT-Abfrage fehlgeschlagen: %s", e)
 
-    host = os.environ.get("MQTT_HOST")
-    port = int(os.environ.get("MQTT_PORT", 1883))
-    username = os.environ.get("MQTT_USERNAME")
-    password = os.environ.get("MQTT_PASSWORD")
-    if host and username:
-        return host, port, username, password
     return None
 
 

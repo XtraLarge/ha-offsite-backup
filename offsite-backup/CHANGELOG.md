@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 - 2026-05-27
+
+### Hinzugefügt
+- Externe MQTT-Verbindung konfigurierbar (`mqtt_host`, `mqtt_port`, `mqtt_user`, `mqtt_password`)
+- MQTT-Credentials aus Add-on-Optionen haben Vorrang vor Supervisor-Discovery
+
 ## 1.1.0 - 2026-05-27
 
 ### Hinzugefügt
