@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.24 - 2026-05-27
+
+### Behoben
+- `run.sh` prüft jetzt beide möglichen Token-Namen: `SUPERVISOR_TOKEN` und `HASSIO_TOKEN` (Fallback für ältere HA-Versionen)
+
 ## 1.2.23 - 2026-05-27
 
 ### Behoben
