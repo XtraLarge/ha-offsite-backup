@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.29 - 2026-05-27
+
+### Behoben
+- `_write_secret` nutzt jetzt `printf '%b\n'` statt `printf '%b'` — Command-Substitution `$()` schneidet abschließenden Zeilenumbruch ab, wodurch libcrypto den SSH-Key ablehnte (`error in libcrypto`)
+- `crontab /etc/cron.d/offsite-backup` entfernt — Zeile installierte Cron-Eintrag doppelt als User-Crontab ohne User-Feld, was dazu führte dass `root` als Kommando interpretiert wurde (`/bin/sh: 1: root: not found`)
+
 ## 1.2.28 - 2026-05-27
 
 ### Geändert
