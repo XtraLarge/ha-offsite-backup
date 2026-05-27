@@ -112,7 +112,7 @@ if __name__ == "__main__":
         ip = socket.gethostbyname(socket.gethostname())
     except Exception:
         ip = "<HA-IP>"
-    url = f"http://{ip}:8900/BackupPC/"
+    url = f"http://{ip}:8080/BackupPC_Admin"
 
     client = start_mqtt(opts)
 

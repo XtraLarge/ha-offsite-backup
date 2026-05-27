@@ -1,10 +1,10 @@
-#!/usr/bin/with-contenv bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 CONFIG=/data/options.json
 SSHFS_MOUNT=/mnt/hetzner
 BACKUPPC_CONF=/etc/backuppc
-BACKUPPC_HOME=/var/lib/backuppc
+BACKUPPC_HOME=/home/backuppc
 HETZNER_KEY=/data/secrets/id_ed25519_hetzner
 
 HETZNER_USER=$(jq -r '.hetzner_user' "$CONFIG")
@@ -15,13 +15,13 @@ SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
 # Quellpfad auf der Storage Box bestimmen
 if [[ -n "$SNAPSHOT_NAME" ]]; then
   HETZNER_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
-  IMPORT_FLAG="/data/config-imported-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
+  IMPORT_FLAG="/data/config-imported-v2-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
   echo "BackupPC Umgebung startet (Snapshot-Modus)"
   echo "  Hetzner:  ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
   echo "  Snapshot: ${SNAPSHOT_NAME}"
 else
   HETZNER_SOURCE="/home/ZPool"
-  IMPORT_FLAG="/data/config-imported"
+  IMPORT_FLAG="/data/config-imported-v2"
   echo "BackupPC Umgebung startet (Live-Modus)"
   echo "  Hetzner: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
 fi
@@ -50,7 +50,6 @@ SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFil
 mkdir -p "$SSHFS_MOUNT"
 if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Mounte SSHFS: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE} → $SSHFS_MOUNT"
-  echo "FUSE-Check: /dev/fuse = $(ls -la /dev/fuse 2>&1)"
   set +e
   SSHFS_OUT=$(sshfs -p "$HETZNER_PORT" \
     -o "${SSH_OPTS},allow_other" \
@@ -68,67 +67,45 @@ fi
 # BackupPC-Config übernehmen (einmalig pro Snapshot/Live-Kombination)
 if [[ ! -f "$IMPORT_FLAG" ]]; then
   echo "Importiere BackupPC-Config..."
-  # Container-Defaults entfernen (können Typ-Konflikte mit Hetzner-Verzeichnisstruktur verursachen)
   rm -rf "${BACKUPPC_CONF:?}/"*
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." "$BACKUPPC_HOME/" 2>/dev/null || true
-  # TopDir auf den SSHFS-Mount setzen
-  perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
-    "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
-    echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
-  # Neue Sicherungen deaktivieren
-  grep -qF 'BackupsDisable' "${BACKUPPC_CONF}/config.pl" \
-    || printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
   touch "$IMPORT_FLAG"
   echo "Config importiert."
 fi
 
-# Berechtigungen
-chown -R backuppc:backuppc "$BACKUPPC_CONF" "$BACKUPPC_HOME" 2>/dev/null || true
+# TopDir auf den SSHFS-Mount setzen
+perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
+  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
+  echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
 
-# CgiAdminUsers sicherstellen (Hetzner-Config könnte anderen User haben)
+# Neue Sicherungen deaktivieren (letzter Eintrag gewinnt in Perl)
+grep -qF 'BackupsDisable' "${BACKUPPC_CONF}/config.pl" \
+  || printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
+
+# CgiAdminUsers sicherstellen (Hetzner-Config könnte anderen User enthalten)
 perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
 printf '\n$Conf{CgiAdminUsers} = "backuppc";\n' >> "${BACKUPPC_CONF}/config.pl"
 
-# Apache BackupPC-Route konfigurieren (a2enconf backuppc schlägt im Build fehl)
-# Kein Passwort-Schutz: Port 8900 ist nur im lokalen Netz erreichbar.
-# SetEnv REMOTE_USER=backuppc setzt den Admin-User direkt im CGI-Environment.
-cat > /etc/apache2/conf-available/backuppc-recovery.conf << 'APACHEEOF'
-ScriptAlias /BackupPC /usr/share/backuppc/cgi-bin/BackupPC_Admin
+# Berechtigungen setzen (UID 1000 = backuppc im adferrand/backuppc Image)
+chown -R 1000:1000 "$BACKUPPC_CONF" "$BACKUPPC_HOME" 2>/dev/null || true
 
-<Directory /usr/share/backuppc/cgi-bin>
-    Options ExecCGI FollowSymlinks
-    AllowOverride None
-    Require all granted
-</Directory>
+# Lighttpd: mod_setenv laden + Auth deaktivieren, REMOTE_USER direkt setzen
+# Port 8080 ist nur im lokalen Netz erreichbar — kein Passwort-Schutz nötig.
+if ! grep -q 'mod_setenv' /etc/lighttpd/lighttpd.conf 2>/dev/null; then
+  sed -i 's/"mod_redirect" )/"mod_redirect", "mod_setenv" )/' \
+    /etc/lighttpd/lighttpd.conf 2>/dev/null || true
+fi
 
-Alias /BackupPC-static /usr/share/backuppc/html
-<Directory /usr/share/backuppc/html>
-    Options None
-    AllowOverride None
-    Require all granted
-</Directory>
+cat > /etc/lighttpd/auth.conf << 'LHEOF'
+# Recovery-Modus: Kein Login erforderlich (lokales Netz, Port 8080)
+setenv.add-environment = ("REMOTE_USER" => "backuppc")
+LHEOF
 
-SetEnv REMOTE_USER backuppc
-APACHEEOF
-
-a2enconf backuppc-recovery 2>/dev/null || true
-a2enmod cgi 2>/dev/null || true
-
-# Apache starten
-echo "Starte Apache (Port 8900)..."
-apache2ctl start 2>&1 || true
-
-# BackupPC-Daemon starten
-echo "Starte BackupPC-Daemon..."
-sudo -u backuppc /usr/share/backuppc/bin/BackupPC -d >> /data/logs/backuppc.log 2>&1 &
-
-echo "BackupPC Umgebung läuft."
-echo "  Web-UI: http://<HA-IP>:8900/BackupPC/"
-
-# MQTT-State publizieren
+# MQTT-State-Publisher starten
 python3 /state.py &
 
-# Prozesse am Leben halten
-wait
+echo "Starte BackupPC+lighttpd via supervisord..."
+echo "  Web-UI: http://<HA-IP>:8080/BackupPC_Admin"
+exec /usr/bin/supervisord -c /etc/supervisord.conf
