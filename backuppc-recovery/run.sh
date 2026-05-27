@@ -86,6 +86,36 @@ fi
 # Berechtigungen
 chown -R backuppc:backuppc "$BACKUPPC_CONF" "$BACKUPPC_HOME" 2>/dev/null || true
 
+# CgiAdminUsers sicherstellen (Hetzner-Config könnte anderen User haben)
+perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
+  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
+printf '\n$Conf{CgiAdminUsers} = "backuppc";\n' >> "${BACKUPPC_CONF}/config.pl"
+
+# Apache BackupPC-Route konfigurieren (a2enconf backuppc schlägt im Build fehl)
+cat > /etc/apache2/conf-available/backuppc-recovery.conf << 'APACHEEOF'
+ScriptAlias /BackupPC /usr/share/backuppc/cgi-bin/BackupPC_Admin
+
+<Directory /usr/share/backuppc/cgi-bin>
+    Options ExecCGI FollowSymlinks
+    AllowOverride None
+    AuthType Basic
+    AuthName "BackupPC Recovery"
+    AuthUserFile /etc/backuppc/htpasswd
+    Require valid-user
+</Directory>
+
+Alias /BackupPC-static /usr/share/backuppc/html
+<Directory /usr/share/backuppc/html>
+    Options None
+    AllowOverride None
+    Require all granted
+</Directory>
+APACHEEOF
+
+htpasswd -bc /etc/backuppc/htpasswd backuppc backuppc 2>/dev/null || true
+a2enconf backuppc-recovery 2>/dev/null || true
+a2enmod cgi 2>/dev/null || true
+
 # Apache starten
 echo "Starte Apache (Port 8900)..."
 apache2ctl start 2>&1 || true
