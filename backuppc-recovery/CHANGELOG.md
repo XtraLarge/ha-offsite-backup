@@ -1,3 +1,9 @@
+## 1.0.2
+
+- `#!/usr/bin/with-contenv bash` Shebang (s6-overlay v3 Kompatibilität)
+- SFTP-Verbindungstest vor SSHFS-Mount mit detaillierter Fehlerausgabe
+- SSHFS-Optionen vereinfacht (kein `reconnect`, kein `uid/gid`)
+
 ## 1.0.1
 
 - Snapshot-Modus: `snapshot_name` Option; leer = Live-Daten, sonst Zugriff auf `/home/.snapshots/<name>/ZPool`

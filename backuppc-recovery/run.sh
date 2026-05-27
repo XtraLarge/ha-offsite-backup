@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/with-contenv bash
 set -euo pipefail
 
 CONFIG=/data/options.json
@@ -41,13 +41,35 @@ echo "Hetzner SSH-Key geschrieben."
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
 
+SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,ConnectTimeout=15,BatchMode=yes"
+
+# SFTP-Verbindungstest (Hetzner Storage Box ist SFTP-only)
+echo "SFTP-Verbindungstest zu ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}..."
+set +e
+SFTP_OUT=$(echo "ls /" | sftp -P "$HETZNER_PORT" -o "$SSH_OPTS" "${HETZNER_USER}@${HETZNER_HOST}" 2>&1)
+SFTP_RC=$?
+set -e
+if [[ $SFTP_RC -ne 0 ]]; then
+  echo "SFTP-Test fehlgeschlagen (rc=$SFTP_RC):"
+  echo "$SFTP_OUT"
+  exit 1
+fi
+echo "SFTP OK: $(echo "$SFTP_OUT" | grep -v '^sftp' | head -3)"
+
 # Hetzner SSHFS mounten
 mkdir -p "$SSHFS_MOUNT"
 if ! mountpoint -q "$SSHFS_MOUNT"; then
-  sshfs -p "$HETZNER_PORT" \
-    -o "IdentityFile=${HETZNER_KEY},allow_other,reconnect,uid=0,gid=0,StrictHostKeyChecking=no" \
-    "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT"
-  mountpoint -q "$SSHFS_MOUNT" || { echo "FEHLER: SSHFS-Mount fehlgeschlagen" >&2; exit 1; }
+  echo "Mounte SSHFS: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE} → $SSHFS_MOUNT"
+  set +e
+  SSHFS_OUT=$(sshfs -p "$HETZNER_PORT" \
+    -o "${SSH_OPTS},allow_other" \
+    "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT" 2>&1)
+  SSHFS_RC=$?
+  set -e
+  if [[ $SSHFS_RC -ne 0 ]] || ! mountpoint -q "$SSHFS_MOUNT"; then
+    echo "FEHLER: SSHFS-Mount fehlgeschlagen (rc=$SSHFS_RC): $SSHFS_OUT" >&2
+    exit 1
+  fi
   echo "Hetzner gemountet: $SSHFS_MOUNT (${HETZNER_SOURCE})"
 fi
 
