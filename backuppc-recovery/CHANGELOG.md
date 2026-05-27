@@ -1,3 +1,9 @@
+## 1.0.7
+
+- Apache BackupPC-Route explizit in `run.sh` konfiguriert — `a2enconf backuppc` schlug im Dockerfile-Build lautlos fehl, `/BackupPC/` lieferte 404
+- Login: `backuppc` / `backuppc` (htpasswd wird beim Start erzeugt)
+- `$Conf{CgiAdminUsers}` auf `"backuppc"` gesetzt — Hetzner-Config konnte abweichenden Admin-User haben
+
 ## 1.0.6
 
 - Config-Import: `/etc/backuppc/` vor `cp -a` leeren — Container-Default hatte `/etc/backuppc/pc` als Datei, Hetzner-Quelle hat `pc` als Verzeichnis → `cp` Typ-Konflikt → Abbruch
