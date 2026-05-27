@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 - 2026-05-27
+
+### Behoben
+- `next_run` Zeitstempel jetzt mit Zeitzone (ISO 8601) — behebt "unbekannt" in HA timestamp-Sensor
+
 ## 1.2.0 - 2026-05-27
 
 ### Hinzugefügt

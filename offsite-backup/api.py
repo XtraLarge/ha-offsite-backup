@@ -64,9 +64,10 @@ def get_next_run():
         return None
     try:
         from croniter import croniter
-        it = croniter(schedule, datetime.now())
-        nxt = it.get_next(datetime)
-        return nxt.replace(tzinfo=None).isoformat()
+        now = datetime.now().astimezone()
+        it = croniter(schedule, now)
+        nxt = it.get_next(datetime).astimezone()
+        return nxt.isoformat()
     except Exception:
         return None
 
