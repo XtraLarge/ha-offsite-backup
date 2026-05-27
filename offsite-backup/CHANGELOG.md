@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.11 - 2026-05-27
+
+### Geändert
+- Zeitangaben (Letzter Lauf, Nächster Backup, Snapshots) in lesbares deutsches Format `27.05.2026, 20:00` umgewandelt — Zeitzone des Browsers wird automatisch berücksichtigt
+- Snapshots chronologisch sortiert (neuester zuerst), auch im Dropdown
+
 ## 1.2.10 - 2026-05-27
 
 ### Geändert

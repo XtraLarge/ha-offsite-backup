@@ -487,6 +487,13 @@ function showMsg(text, dur=3000) {
   el._t = setTimeout(() => el.style.display = 'none', dur);
 }
 
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+
 function statusBadgeClass(s) {
   const map = { success:'ok', failed:'failed', running:'running', unbekannt:'unbekannt' };
   return 'badge badge-' + (map[s] || 'unbekannt');
@@ -498,13 +505,13 @@ async function loadStatus() {
       fetch(base + '/api/status').then(r => r.json()),
       fetch(base + '/api/options').then(r => r.json()),
     ]);
-    document.getElementById('last-run').textContent = s.last_run || '—';
+    document.getElementById('last-run').textContent = fmtDate(s.last_run);
     const badge = document.getElementById('status-badge');
     badge.textContent = s.status || '—';
     badge.className = statusBadgeClass(s.status);
     document.getElementById('nas-host').textContent = o.nas_host || '?';
     document.getElementById('schedule').textContent = o.backup_schedule || '?';
-    document.getElementById('next-run').textContent = s.next_run || '—';
+    document.getElementById('next-run').textContent = fmtDate(s.next_run);
 
     const rec = document.getElementById('recovery-status');
     if (s.recovery_running) {
@@ -533,17 +540,17 @@ async function loadSnapshots() {
   try {
     const d = await fetch(base + '/api/backups').then(r => r.json());
     if (d.error) { el.innerHTML = `<span style="color:red">${d.error}</span>`; return; }
-    const snaps = d.snapshots || [];
+    const snaps = (d.snapshots || []).sort((a, b) => new Date(b.created) - new Date(a.created));
     if (!snaps.length) { el.innerHTML = '<em style="color:#aaa">Keine Snapshots vorhanden</em>'; return; }
     el.innerHTML = '<table><thead><tr><th>Name</th><th>Erstellt</th><th>Beschreibung</th></tr></thead><tbody>'
-      + snaps.map(s => `<tr><td><code>${s.name||''}</code></td><td>${(s.created||'').slice(0,19)}</td><td>${s.description||''}</td></tr>`).join('')
+      + snaps.map(s => `<tr><td><code>${s.name||''}</code></td><td>${fmtDate(s.created)}</td><td>${s.description||''}</td></tr>`).join('')
       + '</tbody></table>';
     // Dropdown in BackupPC-Card befüllen
     const sel = document.getElementById('snapshot-select');
     if (sel) {
       const prev = sel.value;
       sel.innerHTML = '<option value="">Live-Daten (aktuell)</option>'
-        + snaps.map(s => `<option value="${s.name||''}">${s.name||''} &mdash; ${(s.created||'').slice(0,10)}</option>`).join('');
+        + snaps.map(s => `<option value="${s.name||''}">${s.name||''} &mdash; ${fmtDate(s.created)}</option>`).join('');
       if (prev) sel.value = prev;
     }
   } catch(e) { el.innerHTML = `<span style="color:red">Fehler: ${e}</span>`; }
