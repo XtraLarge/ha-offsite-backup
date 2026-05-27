@@ -4,15 +4,63 @@ set -euo pipefail
 CONFIG=/data/options.json
 SSHFS_MOUNT=/mnt/hetzner
 BACKUPPC_CONF=/etc/backuppc
-BACKUPPC_HOME=/home/backuppc
 HETZNER_KEY=/data/secrets/id_ed25519_hetzner
 
+# ── Adferrand-Umgebung ────────────────────────────────────────────────────────
+export BACKUPPC_USERNAME=backuppc
+export BACKUPPC_GROUPNAME=backuppc
+export BACKUPPC_UUID=1000
+export BACKUPPC_GUID=1000
+
+# User/Gruppe anlegen (shadow-Paket, da adferrand 'shadow' installiert)
+groupadd -g 1000 backuppc 2>/dev/null || true
+useradd -r -d /home/backuppc -g backuppc -u 1000 -s /bin/sh backuppc 2>/dev/null || true
+
+# Verzeichnisse anlegen
+mkdir -p /home/backuppc /data/backuppc/log /data/logs /data/secrets \
+         /var/log/lighttpd /mnt/hetzner /etc/backuppc
+chown -R 1000:1000 /home/backuppc /data/backuppc /var/log/lighttpd 2>/dev/null || true
+
+# ── BackupPC Ersteinrichtung via configure.pl ─────────────────────────────────
+# /firstrun wird im Docker-Build gesetzt (adferrand-Mechanismus).
+# configure.pl installiert BackupPC nach /usr/local/BackupPC.
+if [[ -f /firstrun ]]; then
+  echo "Führe BackupPC configure.pl durch (Ersteinrichtung — läuft nur einmal)..."
+  BACKUPPC_TAR=$(ls /root/BackupPC-*.tar.gz 2>/dev/null | head -1)
+  if [[ -z "$BACKUPPC_TAR" ]]; then
+    echo "FEHLER: BackupPC-Quellpaket /root/BackupPC-*.tar.gz nicht gefunden" >&2
+    exit 1
+  fi
+  BACKUPPC_DIR="/root/${BACKUPPC_TAR##*/}"
+  BACKUPPC_DIR="${BACKUPPC_DIR%.tar.gz}"
+  tar xzf "$BACKUPPC_TAR" -C /root/
+  (
+    cd "$BACKUPPC_DIR"
+    perl configure.pl --batch \
+      --config-dir    /etc/backuppc \
+      --cgi-dir       /var/www/cgi-bin/BackupPC \
+      --data-dir      /data/backuppc \
+      --log-dir       /data/backuppc/log \
+      --hostname      "$(hostname)" \
+      --html-dir      /var/www/html/BackupPC \
+      --html-dir-url  /BackupPC \
+      --install-dir   /usr/local/BackupPC \
+      --backuppc-user backuppc \
+      --config-override "CgiAdminUsers=backuppc"
+  )
+  rm -rf "$BACKUPPC_DIR" "$BACKUPPC_TAR"
+  rm -f /firstrun
+  chown -R 1000:1000 /usr/local/BackupPC /var/www/cgi-bin/BackupPC \
+    /var/www/html/BackupPC /etc/backuppc 2>/dev/null || true
+  echo "BackupPC Ersteinrichtung abgeschlossen."
+fi
+
+# ── Optionen lesen ────────────────────────────────────────────────────────────
 HETZNER_USER=$(jq -r '.hetzner_user' "$CONFIG")
 HETZNER_HOST=$(jq -r '.hetzner_host' "$CONFIG")
 HETZNER_PORT=$(jq -r '.hetzner_port // 23' "$CONFIG")
 SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
 
-# Quellpfad auf der Storage Box bestimmen
 if [[ -n "$SNAPSHOT_NAME" ]]; then
   HETZNER_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
   IMPORT_FLAG="/data/config-imported-v2-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
@@ -26,8 +74,7 @@ else
   echo "  Hetzner: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
 fi
 
-# SSH-Key schreiben
-mkdir -p /data/secrets /data/logs
+# ── SSH-Key schreiben ─────────────────────────────────────────────────────────
 if [[ "$(jq -r '.ssh_key_hetzner // empty' "$CONFIG")" == "" ]]; then
   echo "FEHLER: ssh_key_hetzner nicht konfiguriert" >&2
   exit 1
@@ -40,14 +87,12 @@ if ! head -1 "$HETZNER_KEY" | grep -q 'BEGIN'; then
 fi
 echo "Hetzner SSH-Key geschrieben ($(wc -l < "$HETZNER_KEY") Zeilen)."
 
-# user_allow_other für SSHFS
+# ── SSHFS mounten ─────────────────────────────────────────────────────────────
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
 
 SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,GlobalKnownHostsFile=/dev/null,ConnectTimeout=15"
 
-# Hetzner SSHFS mounten
-mkdir -p "$SSHFS_MOUNT"
 if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Mounte SSHFS: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE} → $SSHFS_MOUNT"
   set +e
@@ -64,17 +109,17 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Hetzner gemountet: $SSHFS_MOUNT (${HETZNER_SOURCE})"
 fi
 
-# BackupPC-Config übernehmen (einmalig pro Snapshot/Live-Kombination)
+# ── BackupPC-Config importieren (einmalig) ────────────────────────────────────
 if [[ ! -f "$IMPORT_FLAG" ]]; then
-  echo "Importiere BackupPC-Config..."
+  echo "Importiere BackupPC-Config von Hetzner..."
   rm -rf "${BACKUPPC_CONF:?}/"*
   cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
-  cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." "$BACKUPPC_HOME/" 2>/dev/null || true
+  cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." /home/backuppc/ 2>/dev/null || true
   touch "$IMPORT_FLAG"
   echo "Config importiert."
 fi
 
-# TopDir auf den SSHFS-Mount setzen
+# TopDir auf SSHFS-Mount setzen
 perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
   echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
@@ -83,44 +128,29 @@ perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC
 grep -qF 'BackupsDisable' "${BACKUPPC_CONF}/config.pl" \
   || printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
 
-# CgiAdminUsers sicherstellen (Hetzner-Config könnte anderen User enthalten)
+# CgiAdminUsers sicherstellen
 perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
 printf '\n$Conf{CgiAdminUsers} = "backuppc";\n' >> "${BACKUPPC_CONF}/config.pl"
 
-# Berechtigungen setzen (UID 1000 = backuppc im adferrand/backuppc Image)
-chown -R 1000:1000 "$BACKUPPC_CONF" "$BACKUPPC_HOME" 2>/dev/null || true
+# Berechtigungen
+chown -R 1000:1000 "$BACKUPPC_CONF" /home/backuppc /data/backuppc 2>/dev/null || true
 
-# Lighttpd: mod_setenv laden + Auth deaktivieren, REMOTE_USER direkt setzen
-# Port 8080 ist nur im lokalen Netz erreichbar — kein Passwort-Schutz nötig.
+# ── Lighttpd konfigurieren ────────────────────────────────────────────────────
+# mod_setenv laden + Auth deaktivieren + REMOTE_USER direkt setzen
 if ! grep -q 'mod_setenv' /etc/lighttpd/lighttpd.conf 2>/dev/null; then
   sed -i 's/"mod_redirect" )/"mod_redirect", "mod_setenv" )/' \
     /etc/lighttpd/lighttpd.conf 2>/dev/null || true
 fi
-
 cat > /etc/lighttpd/auth.conf << 'LHEOF'
-# Recovery-Modus: Kein Login erforderlich (lokales Netz, Port 8080)
+# Recovery-Modus: Kein Login nötig (nur lokales Netz, Port 8080)
 setenv.add-environment = ("REMOTE_USER" => "backuppc")
 LHEOF
 
-# Umgebungsvariablen die der adferrand-Entrypoint normalerweise setzt
-export BACKUPPC_USERNAME=backuppc
-export BACKUPPC_GROUPNAME=backuppc
-export BACKUPPC_UUID=1000
-export BACKUPPC_GUID=1000
+# msmtp-Logdatei anlegen damit watchmails nicht crasht
+touch /var/log/msmtp.log
 
-# backuppc-User/-Gruppe anlegen (wird normalerweise vom adferrand-Entrypoint erledigt)
-if ! getent group backuppc >/dev/null 2>&1; then
-  addgroup -g 1000 backuppc 2>/dev/null || true
-fi
-if ! id backuppc >/dev/null 2>&1; then
-  adduser -D -u 1000 -G backuppc -h /home/backuppc -s /bin/sh backuppc 2>/dev/null || true
-  echo "backuppc-User angelegt (UID 1000)."
-fi
-mkdir -p /home/backuppc /data/backuppc
-chown 1000:1000 /home/backuppc /data/backuppc 2>/dev/null || true
-
-# MQTT-State-Publisher starten
+# ── Dienste starten ───────────────────────────────────────────────────────────
 python3 /state.py &
 
 echo "Starte BackupPC+lighttpd via supervisord..."
