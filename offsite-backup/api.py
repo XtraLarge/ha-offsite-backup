@@ -683,6 +683,9 @@ if __name__ == "__main__":
     _token_keys = [k for k in os.environ if any(x in k.upper() for x in ("TOKEN", "HASSIO", "SUPERVISOR", "SECRET"))]
     log.info("Token-Env-Vars vorhanden: %s", _token_keys or "keine")
     log.info("Alle Env-Vars: %s", sorted(os.environ.keys()))
+    for _f in ["/run/secrets/hassio_token", "/etc/supervisor_token",
+               "/var/run/hassio_supervisor_token", "/data/supervisor_token"]:
+        log.info("Token-Datei %s: %s", _f, "vorhanden" if os.path.exists(_f) else "fehlt")
     start_mqtt()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
