@@ -38,17 +38,17 @@ Das Add-on kann auch eigenständig konfiguriert und gestartet werden. Alle Felde
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| `hetzner_user` | Hetzner Storage Box Benutzername | `u123456` |
-| `hetzner_host` | Hetzner Storage Box Hostname | `u123456.your-storagebox.de` |
-| `hetzner_port` | SSH-Port (Standard: 23) | `23` |
+| `offsite_user` | Offsite Storage Box Benutzername | `u123456` |
+| `offsite_host` | Offsite Storage Box Hostname | `u123456.your-storagebox.de` |
+| `offsite_port` | SSH-Port (Standard: 23) | `23` |
 | `snapshot_name` | Snapshot-Name für Datenzugriff (leer = Live) | `Snap_YYYY-MM-DD` |
-| `ssh_key_hetzner` | Privater SSH-Key für Hetzner Storage Box | (mehrzeilig) |
+| `ssh_key_offsite` | Privater SSH-Key für Offsite Storage Box | (mehrzeilig) |
 | `mqtt_host` | MQTT-Broker (optional) | `192.168.1.10` |
 | `mqtt_port` | MQTT-Port | `1883` |
 | `mqtt_user` | MQTT-Benutzer | |
 | `mqtt_password` | MQTT-Passwort | |
 
-> Wenn das Add-on über das Offsite Backup Dashboard gestartet wird, werden `hetzner_user`, `hetzner_host`, `hetzner_port`, `snapshot_name`, `ssh_key_hetzner` und MQTT-Daten automatisch übertragen – kein manuelles Eintragen nötig.
+> Wenn das Add-on über das Offsite Backup Dashboard gestartet wird, werden `offsite_user`, `offsite_host`, `offsite_port`, `snapshot_name`, `ssh_key_offsite` und MQTT-Daten automatisch übertragen – kein manuelles Eintragen nötig.
 
 ---
 
@@ -74,8 +74,8 @@ Beim Start des Add-ons passiert folgendes:
 
 1. **Benutzer anlegen:** `backuppc` (UID/GID 1000) wird erstellt
 2. **BackupPC einrichten** (nur beim ersten Start): `configure.pl` läuft gegen `/data/backuppc` (lokal, nicht SSHFS – vermeidet `chown`-Probleme)
-3. **SSH-Key schreiben:** `ssh_key_hetzner` wird nach `/data/secrets/id_ed25519_hetzner` geschrieben
-4. **SSHFS mounten:** `<hetzner_user>@<hetzner_host>:/home/.snapshots/<snapshot>/ZPool` oder `/home/ZPool` (Live)
+3. **SSH-Key schreiben:** `ssh_key_offsite` wird nach `/data/secrets/id_ed25519_offsite` geschrieben
+4. **SSHFS mounten:** `<offsite_user>@<offsite_host>:/home/.snapshots/<snapshot>/ZPool` oder `/home/ZPool` (Live)
 5. **BackupPC-Config importieren** (einmalig pro Snapshot): Config wird von `<mount>/Docker/backuppc/config/` nach `/etc/backuppc/` kopiert
 6. **TopDir setzen:** `$Conf{TopDir}` wird auf `<sshfs-mount>/BackupPC` gesetzt
 7. **lighttpd + BackupPC** via supervisord starten
@@ -106,7 +106,7 @@ FEHLER: SSHFS-Mount fehlgeschlagen (rc=...)
 
 Ursachen und Prüfungen:
 - SSH-Key ungültig: Beginnt der Key mit `-----BEGIN OPENSSH PRIVATE KEY-----`?
-- Hetzner-Host nicht erreichbar: `ping <hetzner_host>` und Port 23 erreichbar?
+- Offsite-Host nicht erreichbar: `ping <offsite_host>` und Port 23 erreichbar?
 - Add-on hat `SYS_ADMIN`-Capability und `/dev/fuse` – läuft es als privileged?
 
 ### BackupPC startet nicht: `can't find command BackupPC`

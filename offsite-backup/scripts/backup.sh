@@ -27,15 +27,15 @@ _loki_ship() {
 trap '_loki_ship' EXIT
 
 # Optionen lesen
-NAS_HOST=$(jq -r '.nas_host' "$OPTIONS_FILE")
-NAS_USER=$(jq -r '.nas_user // "root"' "$OPTIONS_FILE")
-TARGET_USER=$(jq -r '.hetzner_user' "$OPTIONS_FILE")
-TARGET_HOST=$(jq -r '.hetzner_host' "$OPTIONS_FILE")
-SSH_PORT=$(jq -r '.hetzner_port // 23' "$OPTIONS_FILE")
-STORAGE_BOX_ID=$(jq -r '.hetzner_box_id' "$OPTIONS_FILE")
+ZFS_HOST=$(jq -r '.zfs_storage_host' "$OPTIONS_FILE")
+ZFS_USER=$(jq -r '.zfs_storage_user // "root"' "$OPTIONS_FILE")
+OFFSITE_USER=$(jq -r '.offsite_user' "$OPTIONS_FILE")
+OFFSITE_HOST=$(jq -r '.offsite_host' "$OPTIONS_FILE")
+OFFSITE_PORT=$(jq -r '.offsite_port // 23' "$OPTIONS_FILE")
+OFFSITE_BOX_ID=$(jq -r '.offsite_box_id' "$OPTIONS_FILE")
 
 # Secrets prüfen
-for secret in hetzner_token id_ed25519_nas id_ed25519_hetzner; do
+for secret in offsite_token id_ed25519_storage id_ed25519_offsite; do
   if [[ ! -f "$SECRETS_DIR/$secret" ]]; then
     echo "$(date '+%F %T'): FEHLER: $SECRETS_DIR/$secret fehlt – Setup nötig (siehe DOCS.md)"
     exit 1
@@ -43,25 +43,25 @@ for secret in hetzner_token id_ed25519_nas id_ed25519_hetzner; do
 done
 chmod 600 "$SECRETS_DIR"/id_ed25519_*
 
-HETZNER_API_TOKEN="$(cat "$SECRETS_DIR/hetzner_token")"
-if [[ -z "$HETZNER_API_TOKEN" ]]; then
-  echo "$(date '+%F %T'): FEHLER: hetzner_token ist leer"
+OFFSITE_API_TOKEN="$(cat "$SECRETS_DIR/offsite_token")"
+if [[ -z "$OFFSITE_API_TOKEN" ]]; then
+  echo "$(date '+%F %T'): FEHLER: offsite_token ist leer"
   exit 1
 fi
 
-# SSH-Agent mit Hetzner-Key starten (wird per Agent-Forwarding zur NAS weitergeleitet)
+# SSH-Agent mit Offsite-Key starten (wird per Agent-Forwarding zur ZFS-Storage weitergeleitet)
 eval "$(ssh-agent -s)"
-ssh-add "$SECRETS_DIR/id_ed25519_hetzner"
-echo "$(date '+%F %T'): Hetzner SSH-Key in Agent geladen"
+ssh-add "$SECRETS_DIR/id_ed25519_offsite"
+echo "$(date '+%F %T'): Offsite SSH-Key in Agent geladen"
 
-echo "$(date '+%F %T'): Starte Backup auf ${NAS_USER}@${NAS_HOST} (Script per Pipe)"
+echo "$(date '+%F %T'): Starte Backup auf ${ZFS_USER}@${ZFS_HOST} (Script per Pipe)"
 
 {
-  printf 'export HETZNER_API_TOKEN=%q\n'  "$HETZNER_API_TOKEN"
-  printf 'export TARGET_USER=%q\n'        "$TARGET_USER"
-  printf 'export TARGET_HOST=%q\n'        "$TARGET_HOST"
-  printf 'export SSH_PORT=%q\n'           "$SSH_PORT"
-  printf 'export STORAGE_BOX_ID=%q\n'     "$STORAGE_BOX_ID"
+  printf 'export OFFSITE_API_TOKEN=%q\n'  "$OFFSITE_API_TOKEN"
+  printf 'export OFFSITE_USER=%q\n'       "$OFFSITE_USER"
+  printf 'export OFFSITE_HOST=%q\n'       "$OFFSITE_HOST"
+  printf 'export OFFSITE_PORT=%q\n'       "$OFFSITE_PORT"
+  printf 'export OFFSITE_BOX_ID=%q\n'     "$OFFSITE_BOX_ID"
   printf 'export USE_SSH_PASSWORD=0\n'
   printf 'export RUNNING_IN_SCREEN=1\n'
   printf 'export RSYNC_LOG=/dev/null\n'
@@ -69,8 +69,8 @@ echo "$(date '+%F %T'): Starte Backup auf ${NAS_USER}@${NAS_HOST} (Script per Pi
 } | ssh -A \
         -o StrictHostKeyChecking=no \
         -o BatchMode=yes \
-        -i "$SECRETS_DIR/id_ed25519_nas" \
-        "${NAS_USER}@${NAS_HOST}" \
+        -i "$SECRETS_DIR/id_ed25519_storage" \
+        "${ZFS_USER}@${ZFS_HOST}" \
         "bash -s"
 
 echo "$(date '+%F %T'): ============================================"

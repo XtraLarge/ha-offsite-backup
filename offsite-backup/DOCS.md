@@ -16,9 +16,9 @@ Das Add-on läuft auf Home Assistant und steuert den wöchentlichen Offsite-Back
 
 ## 1. Voraussetzungen
 
-### NAS-Setup
+### ZFS-Storage-Setup
 
-Die NAS (auf die das Add-on per SSH verbindet) muss folgendes haben:
+Der ZFS-Storage-Host (auf den das Add-on per SSH verbindet) muss folgendes haben:
 
 - ZFS-Pool `ZPool` mit Dataset `ZPool/BackupPC` (BackupPC-Daten)
 - Optional: `/ZPool/Docker/backuppc/` und `/ZPool/Docker/_DockerCreate/` (Docker-Config)
@@ -31,9 +31,9 @@ Die NAS (auf die das Add-on per SSH verbindet) muss folgendes haben:
 - Port 23 (Standard für Hetzner Storage Boxes)
 - Zieldirektorie: `/home/ZPool/BackupPC/` und `/home/ZPool/Docker/`
 
-### SSH-Key auf der NAS eintragen
+### SSH-Key auf dem ZFS-Storage-Host eintragen
 
-Den **Public Key** von `ssh_key_nas` in `/root/.ssh/authorized_keys` der NAS eintragen:
+Den **Public Key** von `ssh_key_storage` in `/root/.ssh/authorized_keys` des ZFS-Storage-Hosts eintragen:
 
 ```
 command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA... hassio-offsite-backup
@@ -41,7 +41,7 @@ command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA..
 
 Den Public Key erzeugt man aus dem privaten Key:
 ```bash
-ssh-keygen -y -f id_ed25519_nas
+ssh-keygen -y -f id_ed25519_storage
 ```
 
 ---
@@ -54,16 +54,16 @@ Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eing
 
 | Feld | Beschreibung | Beispiel |
 |------|-------------|---------|
-| `nas_host` | Hostname oder IP der NAS | `nas.example.local` |
-| `nas_user` | SSH-Benutzer auf der NAS | `root` |
-| `hetzner_user` | Hetzner Storage Box Benutzername | `u123456` |
-| `hetzner_host` | Hetzner Storage Box Hostname | `u123456.your-storagebox.de` |
-| `hetzner_port` | SSH-Port der Storage Box | `23` |
-| `hetzner_box_id` | Numerische Storage Box ID | `510043` |
+| `zfs_storage_host` | Hostname oder IP des ZFS-Storage-Hosts | `nas.example.local` |
+| `zfs_storage_user` | SSH-Benutzer auf dem ZFS-Storage-Host | `root` |
+| `offsite_user` | Offsite Storage Box Benutzername | `u123456` |
+| `offsite_host` | Offsite Storage Box Hostname | `u123456.your-storagebox.de` |
+| `offsite_port` | SSH-Port der Storage Box | `23` |
+| `offsite_box_id` | Numerische Storage Box ID | `510043` |
 | `backup_schedule` | Cron-Ausdruck (Container-Zeit = UTC) | `0 18 * * 3` |
-| `ssh_key_nas` | Privater SSH-Key für NAS-Verbindung | (mehrzeilig) |
-| `ssh_key_hetzner` | Privater SSH-Key für Hetzner | (mehrzeilig) |
-| `hetzner_token` | Hetzner API Token | `hGsX7...` |
+| `ssh_key_storage` | Privater SSH-Key für ZFS-Storage-Verbindung | (mehrzeilig) |
+| `ssh_key_offsite` | Privater SSH-Key für Offsite Storage Box | (mehrzeilig) |
+| `offsite_token` | Offsite Storage API Token | `hGsX7...` |
 
 > **Achtung Zeitzone:** Der Container läuft in UTC. `0 18 * * 3` entspricht Mittwoch 20:00 CEST (UTC+2). Cron-Zeit entsprechend anpassen.
 
@@ -77,11 +77,10 @@ Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eing
 | `mqtt_port` | MQTT-Broker Port | `1883` |
 | `mqtt_user` | MQTT-Benutzer | leer |
 | `mqtt_password` | MQTT-Passwort | leer |
-| `ssh_key_recovery` | SSH-Key für Remote-Recovery (nicht verwendet) | leer |
 
 ### SSH-Keys eintragen
 
-SSH-Keys werden als `password`-Felder eingetragen (in der HA-UI mit `*` maskiert). Zwei Formate werden akzeptiert:
+SSH-Keys (`ssh_key_storage`, `ssh_key_offsite`) werden als `password`-Felder eingetragen (in der HA-UI mit `*` maskiert). Zwei Formate werden akzeptiert:
 
 **Mehrzeilig** (direkt einfügen mit Enter):
 ```
@@ -181,14 +180,14 @@ Bei konfiguriertem MQTT werden folgende Entitäten als Auto-Discovery publiziert
 SSH-Key ist beschädigt. Schlüssel neu generieren und in der HA-Konfiguration eintragen.
 
 ### Backup schlägt fehl: `Permission denied (publickey)`
-Public Key des `ssh_key_nas` nicht in der NAS-`authorized_keys`. Eintrag prüfen:
+Public Key des `ssh_key_storage` nicht in der `authorized_keys` des ZFS-Storage-Hosts. Eintrag prüfen:
 ```bash
 grep 'hassio' /root/.ssh/authorized_keys
 ```
 
 ### Backup schlägt fehl: `dataset does not exist`
-`nas_host` zeigt auf den falschen Host oder `ZPool/BackupPC` existiert nicht.
-Prüfen: `zfs list ZPool/BackupPC` auf der konfigurierten NAS.
+`zfs_storage_host` zeigt auf den falschen Host oder `ZPool/BackupPC` existiert nicht.
+Prüfen: `zfs list ZPool/BackupPC` auf dem konfigurierten ZFS-Storage-Host.
 
 ### Backup schlägt fehl: `dataset is busy`
 Ein alter rsync-Prozess hält den ZFS-Snapshot belegt.

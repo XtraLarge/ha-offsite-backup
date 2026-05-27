@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.31 - 2026-05-27
+
+### Geändert
+- Optionsnamen rollen-basiert umbenannt (weg von Gerätetyp/Hersteller):
+  - `nas_host` → `zfs_storage_host`, `nas_user` → `zfs_storage_user`
+  - `hetzner_user/host/port/box_id/token` → `offsite_user/host/port/box_id/token`
+  - `ssh_key_nas` → `ssh_key_storage`, `ssh_key_hetzner` → `ssh_key_offsite`
+- Tote Optionen `recovery_target` und `ssh_key_recovery` entfernt
+- Interne Variablen (`NAS_*`, `TARGET_*`, `HETZNER_*`) entsprechend angepasst
+- Secret-Dateien: `id_ed25519_nas` → `id_ed25519_storage`, `id_ed25519_hetzner` → `id_ed25519_offsite`, `hetzner_token` → `offsite_token`
+
 ## 1.2.30 - 2026-05-27
 
 ### Geändert

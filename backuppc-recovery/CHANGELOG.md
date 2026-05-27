@@ -1,3 +1,12 @@
+## 2.0.4
+
+- Optionsnamen umbenannt: `hetzner_user/host/port` → `offsite_user/host/port`, `ssh_key_hetzner` → `ssh_key_offsite`
+- Interne Variablen (`HETZNER_*`) entsprechend auf `OFFSITE_*` angepasst
+
+## 2.0.3
+
+- (kein separater Eintrag — build-fix intern)
+
 ## 2.0.0
 
 **Kompletter Umbau** — Basis-Image gewechselt auf `adferrand/backuppc:4.4.0-12`

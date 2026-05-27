@@ -143,15 +143,15 @@ def trigger_recovery(action, snapshot_name=""):
             opts = read_options()
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/options", {
                 "options": {
-                    "hetzner_user":    opts.get("hetzner_user", ""),
-                    "hetzner_host":    opts.get("hetzner_host", ""),
-                    "hetzner_port":    int(opts.get("hetzner_port", 23)),
+                    "offsite_user":    opts.get("offsite_user", ""),
+                    "offsite_host":    opts.get("offsite_host", ""),
+                    "offsite_port":    int(opts.get("offsite_port", 23)),
                     "snapshot_name":   snapshot_name,
                     "mqtt_host":       opts.get("mqtt_host", ""),
                     "mqtt_port":       int(opts.get("mqtt_port", 1883)),
                     "mqtt_user":       opts.get("mqtt_user", ""),
                     "mqtt_password":   opts.get("mqtt_password", ""),
-                    "ssh_key_hetzner": opts.get("ssh_key_hetzner", ""),
+                    "ssh_key_offsite": opts.get("ssh_key_offsite", ""),
                 }
             })
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/start")
@@ -167,15 +167,15 @@ def trigger_recovery(action, snapshot_name=""):
 
 def list_snapshots():
     try:
-        with open("/data/secrets/hetzner_token") as f:
+        with open("/data/secrets/offsite_token") as f:
             token = f.read().strip()
     except Exception:
-        return None, "hetzner_token nicht gefunden (/data/secrets/hetzner_token)"
+        return None, "offsite_token nicht gefunden (/data/secrets/offsite_token)"
 
     opts = read_options()
-    box_id = opts.get("hetzner_box_id", "")
+    box_id = opts.get("offsite_box_id", "")
     if not box_id:
-        return None, "hetzner_box_id nicht konfiguriert"
+        return None, "offsite_box_id nicht konfiguriert"
 
     req = urllib.request.Request(
         f"https://api.hetzner.com/v1/storage_boxes/{box_id}/snapshots",
@@ -507,7 +507,7 @@ async function loadStatus() {
     const badge = document.getElementById('status-badge');
     badge.textContent = s.status || '—';
     badge.className = statusBadgeClass(s.status);
-    document.getElementById('nas-host').textContent = o.nas_host || '?';
+    document.getElementById('nas-host').textContent = o.zfs_storage_host || '?';
     document.getElementById('schedule').textContent = o.backup_schedule || '?';
     document.getElementById('next-run').textContent = fmtDate(s.next_run);
 
@@ -631,9 +631,9 @@ class Handler(BaseHTTPRequestHandler):
             self._json(s)
         elif path == "/api/options":
             opts = read_options()
-            _hidden = {"hetzner_user", "hetzner_host", "hetzner_box_id",
-                       "ssh_key_nas", "ssh_key_hetzner", "ssh_key_recovery",
-                       "hetzner_token", "mqtt_password"}
+            _hidden = {"offsite_user", "offsite_host", "offsite_box_id",
+                       "ssh_key_storage", "ssh_key_offsite",
+                       "offsite_token", "mqtt_password"}
             safe = {k: v for k, v in opts.items() if k not in _hidden}
             self._json(safe)
         elif path == "/api/log":

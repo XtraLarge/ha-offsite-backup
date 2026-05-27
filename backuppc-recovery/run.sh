@@ -4,7 +4,7 @@ set -euo pipefail
 CONFIG=/data/options.json
 SSHFS_MOUNT=/mnt/hetzner
 BACKUPPC_CONF=/etc/backuppc
-HETZNER_KEY=/data/secrets/id_ed25519_hetzner
+OFFSITE_KEY=/data/secrets/id_ed25519_offsite
 
 # ── Adferrand-Umgebung ────────────────────────────────────────────────────────
 export BACKUPPC_USERNAME=backuppc
@@ -56,49 +56,49 @@ if [[ -f /firstrun ]]; then
 fi
 
 # ── Optionen lesen ────────────────────────────────────────────────────────────
-HETZNER_USER=$(jq -r '.hetzner_user' "$CONFIG")
-HETZNER_HOST=$(jq -r '.hetzner_host' "$CONFIG")
-HETZNER_PORT=$(jq -r '.hetzner_port // 23' "$CONFIG")
+OFFSITE_USER=$(jq -r '.offsite_user' "$CONFIG")
+OFFSITE_HOST=$(jq -r '.offsite_host' "$CONFIG")
+OFFSITE_PORT=$(jq -r '.offsite_port // 23' "$CONFIG")
 SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
 
 if [[ -n "$SNAPSHOT_NAME" ]]; then
-  HETZNER_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
+  OFFSITE_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
   IMPORT_FLAG="/data/config-imported-v2-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
   echo "BackupPC Umgebung startet (Snapshot-Modus)"
-  echo "  Hetzner:  ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
+  echo "  Offsite:  ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
   echo "  Snapshot: ${SNAPSHOT_NAME}"
 else
-  HETZNER_SOURCE="/home/ZPool"
+  OFFSITE_SOURCE="/home/ZPool"
   IMPORT_FLAG="/data/config-imported-v2"
   echo "BackupPC Umgebung startet (Live-Modus)"
-  echo "  Hetzner: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_PORT}"
+  echo "  Offsite: ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
 fi
 
 # ── SSH-Key schreiben ─────────────────────────────────────────────────────────
-if [[ "$(jq -r '.ssh_key_hetzner // empty' "$CONFIG")" == "" ]]; then
-  echo "FEHLER: ssh_key_hetzner nicht konfiguriert" >&2
+if [[ "$(jq -r '.ssh_key_offsite // empty' "$CONFIG")" == "" ]]; then
+  echo "FEHLER: ssh_key_offsite nicht konfiguriert" >&2
   exit 1
 fi
-jq -r '.ssh_key_hetzner' "$CONFIG" > "$HETZNER_KEY"
-chmod 600 "$HETZNER_KEY"
-if ! head -1 "$HETZNER_KEY" | grep -q 'BEGIN'; then
+jq -r '.ssh_key_offsite' "$CONFIG" > "$OFFSITE_KEY"
+chmod 600 "$OFFSITE_KEY"
+if ! head -1 "$OFFSITE_KEY" | grep -q 'BEGIN'; then
   echo "FEHLER: SSH-Key-Datei ungültig (kein PEM-Header)" >&2
   exit 1
 fi
-echo "Hetzner SSH-Key geschrieben ($(wc -l < "$HETZNER_KEY") Zeilen)."
+echo "Offsite SSH-Key geschrieben ($(wc -l < "$OFFSITE_KEY") Zeilen)."
 
 # ── SSHFS mounten ─────────────────────────────────────────────────────────────
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null \
     || echo 'user_allow_other' >> /etc/fuse.conf
 
-SSH_OPTS="IdentityFile=${HETZNER_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,GlobalKnownHostsFile=/dev/null,ConnectTimeout=15"
+SSH_OPTS="IdentityFile=${OFFSITE_KEY},StrictHostKeyChecking=no,UserKnownHostsFile=/dev/null,GlobalKnownHostsFile=/dev/null,ConnectTimeout=15"
 
 if ! mountpoint -q "$SSHFS_MOUNT"; then
-  echo "Mounte SSHFS: ${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE} → $SSHFS_MOUNT"
+  echo "Mounte SSHFS: ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_SOURCE} → $SSHFS_MOUNT"
   set +e
-  SSHFS_OUT=$(sshfs -p "$HETZNER_PORT" \
+  SSHFS_OUT=$(sshfs -p "$OFFSITE_PORT" \
     -o "${SSH_OPTS},allow_other" \
-    "${HETZNER_USER}@${HETZNER_HOST}:${HETZNER_SOURCE}" "$SSHFS_MOUNT" 2>&1)
+    "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_SOURCE}" "$SSHFS_MOUNT" 2>&1)
   SSHFS_RC=$?
   set -e
   if [[ $SSHFS_RC -ne 0 ]] || ! mountpoint -q "$SSHFS_MOUNT"; then
@@ -106,7 +106,7 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
     echo "$SSHFS_OUT"
     exit 1
   fi
-  echo "Hetzner gemountet: $SSHFS_MOUNT (${HETZNER_SOURCE})"
+  echo "Offsite gemountet: $SSHFS_MOUNT (${OFFSITE_SOURCE})"
 fi
 
 # ── BackupPC-Config importieren (einmalig) ────────────────────────────────────

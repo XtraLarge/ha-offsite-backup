@@ -4,11 +4,11 @@
 set -euo pipefail
 
 DATASET="${DATASET:-ZPool/BackupPC}"
-TARGET_USER="${TARGET_USER:?Hetzner-User nicht gesetzt – wird von backup.sh übergeben}"
-TARGET_HOST="${TARGET_HOST:?Hetzner-Host nicht gesetzt – wird von backup.sh übergeben}"
-TARGET_PATH="${TARGET_PATH:-/home}"
-SSH_PORT="${SSH_PORT:-23}"
-STORAGE_BOX_ID="${STORAGE_BOX_ID:?Storage-Box-ID nicht gesetzt – wird von backup.sh übergeben}"
+OFFSITE_USER="${OFFSITE_USER:?Offsite-User nicht gesetzt – wird von backup.sh übergeben}"
+OFFSITE_HOST="${OFFSITE_HOST:?Offsite-Host nicht gesetzt – wird von backup.sh übergeben}"
+OFFSITE_PATH="${OFFSITE_PATH:-/home}"
+OFFSITE_PORT="${OFFSITE_PORT:-23}"
+OFFSITE_BOX_ID="${OFFSITE_BOX_ID:?Offsite-Box-ID nicht gesetzt – wird von backup.sh übergeben}"
 USE_SSH_PASSWORD="${USE_SSH_PASSWORD:-0}"
 STATUS_INTERVAL=60
 RSYNC_MAX_RETRIES=5
@@ -30,13 +30,13 @@ RSYNC_OPTS=(
 )
 
 SSH_CTL="/tmp/ctl-rsync-offline-%C"
-SSH_CMD="ssh -p $SSH_PORT -T -o Compression=no -c aes128-gcm@openssh.com \
+SSH_CMD="ssh -p $OFFSITE_PORT -T -o Compression=no -c aes128-gcm@openssh.com \
   -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
   -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
   -o ControlMaster=auto -o ControlPersist=15m -o ControlPath=$SSH_CTL"
 
 reset_ssh_master() {
-  ssh -p "$SSH_PORT" -o ControlPath="$SSH_CTL" -O exit "$TARGET_USER@$TARGET_HOST" >/dev/null 2>&1 || true
+  ssh -p "$OFFSITE_PORT" -o ControlPath="$SSH_CTL" -O exit "$OFFSITE_USER@$OFFSITE_HOST" >/dev/null 2>&1 || true
 }
 
 ensure_packages() {
@@ -50,7 +50,7 @@ ensure_packages() {
   fi
 }
 
-check_hetzner_token() {
+check_offsite_token() {
   local token="$1" box_id="$2"
   local out http body
   out="$(curl -sS -H "Authorization: Bearer $token" \
@@ -58,8 +58,8 @@ check_hetzner_token() {
         -w $'\n%{http_code}' || true)"
   http="${out##*$'\n'}"; body="${out%$'\n'*}"
   case "$http" in
-    200) echo "Hetzner Token-Check: OK"; return 0 ;;
-    401|403) echo "FEHLER: Hetzner API Token ungültig (HTTP $http)"; return 1 ;;
+    200) echo "Offsite Token-Check: OK"; return 0 ;;
+    401|403) echo "FEHLER: Offsite API Token ungültig (HTTP $http)"; return 1 ;;
     404) echo "FEHLER: Storage Box ID $box_id nicht gefunden"; return 1 ;;
     *) echo "FEHLER: Token-Check HTTP $http"; return 1 ;;
   esac
@@ -68,21 +68,21 @@ check_hetzner_token() {
 # Direkt im Script-Kontext starten (RUNNING_IN_SCREEN=1 gesetzt vom HA-Add-on)
 if [[ -z "${STY:-}" && -z "${RUNNING_IN_SCREEN:-}" ]]; then
   ensure_packages
-  if [[ -z "${HETZNER_API_TOKEN:-}" ]]; then
-    echo "FEHLER: HETZNER_API_TOKEN nicht gesetzt"; exit 1
+  if [[ -z "${OFFSITE_API_TOKEN:-}" ]]; then
+    echo "FEHLER: OFFSITE_API_TOKEN nicht gesetzt"; exit 1
   fi
-  check_hetzner_token "$HETZNER_API_TOKEN" "$STORAGE_BOX_ID"
-  RUNNING_IN_SCREEN=1 HETZNER_API_TOKEN="$HETZNER_API_TOKEN" exec bash "$0" "$@"
+  check_offsite_token "$OFFSITE_API_TOKEN" "$OFFSITE_BOX_ID"
+  RUNNING_IN_SCREEN=1 OFFSITE_API_TOKEN="$OFFSITE_API_TOKEN" exec bash "$0" "$@"
 fi
 
 ensure_packages
 
-HETZNER_TOKEN_LOCAL="${HETZNER_API_TOKEN:-}"
-unset HETZNER_API_TOKEN
-readonly HETZNER_TOKEN_LOCAL
+OFFSITE_TOKEN_LOCAL="${OFFSITE_API_TOKEN:-}"
+unset OFFSITE_API_TOKEN
+readonly OFFSITE_TOKEN_LOCAL
 
-if [[ -z "$HETZNER_TOKEN_LOCAL" ]]; then
-  echo "FEHLER: Hetzner Token fehlt"; exit 1
+if [[ -z "$OFFSITE_TOKEN_LOCAL" ]]; then
+  echo "FEHLER: Offsite Token fehlt"; exit 1
 fi
 
 run_rsync() {
@@ -130,33 +130,33 @@ MP="$(zfs get -H -o value mountpoint "$DATASET")"
 echo "$(date '+%F %T'): Snapshot erstellen: ${DATASET}@${SNAP}"
 run_root zfs snapshot "${DATASET}@${SNAP}"
 
-run_rsync "$MP/.zfs/snapshot/$SNAP/" "${TARGET_USER}@${TARGET_HOST}:${TARGET_PATH}/ZPool/BackupPC/"
+run_rsync "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/BackupPC/"
 echo "$(date '+%F %T'): Snapshot löschen: ${DATASET}@${SNAP}"
 run_root zfs destroy "${DATASET}@${SNAP}"
 
-run_rsync "/ZPool/Docker/backuppc/"     "${TARGET_USER}@${TARGET_HOST}:${TARGET_PATH}/ZPool/Docker/backuppc/"
-run_rsync "/ZPool/Docker/_DockerCreate/" "${TARGET_USER}@${TARGET_HOST}:${TARGET_PATH}/ZPool/Docker/_DockerCreate/"
+run_rsync "/ZPool/Docker/backuppc/"     "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/backuppc/"
+run_rsync "/ZPool/Docker/_DockerCreate/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/_DockerCreate/"
 
 create_storagebox_snapshot() {
   local desc="Snap_$(date +%F)"
-  echo "$(date '+%F %T'): Erstelle Hetzner Snapshot: $desc"
+  echo "$(date '+%F %T'): Erstelle Offsite Snapshot: $desc"
   local resp
   resp="$(curl -sS -X POST \
-    -H "Authorization: Bearer $HETZNER_TOKEN_LOCAL" \
+    -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
     -H "Content-Type: application/json" \
     -d "{\"description\":\"$desc\"}" \
-    "https://api.hetzner.com/v1/storage_boxes/$STORAGE_BOX_ID/snapshots")"
+    "https://api.hetzner.com/v1/storage_boxes/$OFFSITE_BOX_ID/snapshots")"
   local action_id
   action_id="$(jq -r '.action.id // empty' <<<"$resp")"
   if [[ -n "$action_id" ]]; then
     while true; do
       local a status prog
-      a="$(curl -sS -H "Authorization: Bearer $HETZNER_TOKEN_LOCAL" \
+      a="$(curl -sS -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
           "https://api.hetzner.com/v1/storage_boxes/actions/$action_id")"
       status="$(jq -r '.action.status' <<<"$a")"
       prog="$(jq -r '.action.progress // 0' <<<"$a")"
       echo "$(date '+%F %T'): Snapshot-Status: $status (${prog}%)"
-      [[ "$status" == "success" ]] && { echo "$(date '+%F %T'): Hetzner Snapshot erstellt."; break; }
+      [[ "$status" == "success" ]] && { echo "$(date '+%F %T'): Offsite Snapshot erstellt."; break; }
       [[ "$status" == "error" ]] && { echo "$(date '+%F %T'): Snapshot fehlgeschlagen"; return 1; }
       sleep 5
     done
@@ -166,5 +166,5 @@ create_storagebox_snapshot() {
 }
 create_storagebox_snapshot
 reset_ssh_master
-unset HETZNER_TOKEN_LOCAL
+unset OFFSITE_TOKEN_LOCAL
 echo "$(date '+%F %T'): Fertig."
