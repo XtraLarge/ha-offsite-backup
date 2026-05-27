@@ -1,3 +1,7 @@
+## 1.0.3
+
+- `GlobalKnownHostsFile=/dev/null` ergänzt — System-known_hosts blockierte SSHFS-Verbindung zu Hetzner (Host key verification failed)
+
 ## 1.0.2
 
 - `#!/usr/bin/with-contenv bash` Shebang (s6-overlay v3 Kompatibilität)
