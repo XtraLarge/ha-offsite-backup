@@ -22,6 +22,7 @@ options:
   backup_schedule: "0 20 * * 3"
   loki_url: ""
   recovery_target: "local"
+  mqtt_discovery: true
 
 schema:
   nas_host: str
@@ -35,6 +36,7 @@ schema:
   # "local" → BackupPC via Docker-Socket auf HA-RPi
   # IP/Hostname → SSH zu Remote-Docker-Host
   recovery_target: str
+  mqtt_discovery: bool
 
 # Docker-Socket für lokale Recovery (BackupPC-Container starten)
 docker_api: true
