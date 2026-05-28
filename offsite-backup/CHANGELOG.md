@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.38 - 2026-05-28
+
+### Behoben
+- `backup_nas.sh`: `zfs destroy` bei "dataset is busy" bricht nicht mehr den Backup-Lauf ab
+- Neue Funktion `zfs_destroy_retry`: 3 Versuche mit 30s Pause, dann `zfs destroy -d` (deferred) als Fallback
+- Snapshot-Diagnose im Log: vorhandene pre_rsync-Snapshots (inkl. defer_destroy-Status) werden zu Beginn aufgelistet
+
 ## 1.2.37 - 2026-05-28
 
 ### Geändert
