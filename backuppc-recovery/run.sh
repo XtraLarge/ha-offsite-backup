@@ -79,7 +79,8 @@ if [[ "$(jq -r '.ssh_key_offsite // empty' "$CONFIG")" == "" ]]; then
   echo "FEHLER: ssh_key_offsite nicht konfiguriert" >&2
   exit 1
 fi
-jq -r '.ssh_key_offsite' "$CONFIG" > "$OFFSITE_KEY"
+# printf '%b\n' konvertiert \n-Literale in echte Newlines (HA-UI speichert Keys einzeilig)
+printf '%b\n' "$(jq -r '.ssh_key_offsite' "$CONFIG")" > "$OFFSITE_KEY"
 chmod 600 "$OFFSITE_KEY"
 if ! head -1 "$OFFSITE_KEY" | grep -q 'BEGIN'; then
   echo "FEHLER: SSH-Key-Datei ungültig (kein PEM-Header)" >&2

@@ -1,3 +1,7 @@
+## 2.0.6
+
+- SSH-Key-Schreiben: `printf '%b\n'` statt `jq -r ... > file` — HA-UI speichert Keys einzeilig mit `\n`-Literalen statt echten Newlines; `printf '%b'` konvertiert diese korrekt, `jq -r` ließ sie unverändert → libcrypto-Fehler / SSHFS "Connection reset by peer"
+
 ## 2.0.5
 
 - `aarch64` (ARM64/Raspberry Pi) als unterstützte Architektur ergänzt
