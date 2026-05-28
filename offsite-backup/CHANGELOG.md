@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.35 - 2026-05-28
+
+### Geändert
+- `RECOVERY_ADDON_SLUG` wird jetzt dynamisch via Supervisor API ermittelt — funktioniert sowohl mit lokalen Add-ons als auch mit GitHub-Repository-Installationen
+
 ## 1.2.34 - 2026-05-28
 
 ### Geändert
