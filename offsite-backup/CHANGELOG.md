@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.36 - 2026-05-28
+
+### Geändert
+- Snapshot-Auswahl aus Dashboard entfernt — Hetzner API-Snapshots sind per SFTP nicht zugänglich, Recovery läuft immer im Live-Modus
+
 ## 1.2.35 - 2026-05-28
 
 ### Geändert

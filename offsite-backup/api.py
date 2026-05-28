@@ -449,14 +449,6 @@ DASHBOARD_HTML = """\
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: var(--run); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 4px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     code { background: #f5f5f5; padding: .1em .35em; border-radius: 3px; font-size: .85em; }
-    .radio-list { margin-top: .5rem; border: 1px solid #eee; border-radius: 6px; overflow: hidden; }
-    .radio-item { display: flex; align-items: center; gap: .6rem; padding: .5rem .75rem; border-top: 1px solid #eee; font-size: .88rem; cursor: pointer; transition: background .1s; }
-    .radio-item:first-child { border-top: none; }
-    .radio-item:hover { background: #f7f9fc; }
-    .radio-item input[type=radio] { margin: 0; flex-shrink: 0; cursor: pointer; }
-    .radio-item .snap-name { font-weight: 500; }
-    .radio-item .snap-date { color: #888; font-size: .82rem; margin-left: auto; }
-    .radio-item-live .snap-name { color: #388E3C; }
     #msg { position: fixed; bottom: 1.5rem; right: 1.5rem; background: #333; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; display: none; font-size: .88rem; z-index: 999; }
   </style>
 </head>
@@ -481,24 +473,13 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
-  <!-- Karte 2: BackupPC Recovery Umgebung + Snapshots -->
+  <!-- Karte 2: BackupPC Recovery Umgebung -->
   <div class="card">
-    <div class="card-header">
-      <h2>BackupPC Recovery Umgebung</h2>
-      <button class="btn-icon" onclick="loadSnapshots()" title="Snapshots aktualisieren">&#8635;</button>
-    </div>
+    <div class="card-header"><h2>BackupPC Recovery Umgebung</h2></div>
     <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
-      Startet BackupPC via SSHFS &mdash; Lesezugriff auf alle Sicherungen, keine neuen Backups.
+      Startet BackupPC via SSHFS (read-only) &mdash; Lesezugriff auf alle Sicherungen, keine neuen Backups.
     </p>
-    <div id="snapshots-content">
-      <div class="radio-list">
-        <label class="radio-item radio-item-live">
-          <input type="radio" name="snapshot" value="" checked>
-          <span class="snap-name">Live-Daten (aktuell)</span>
-        </label>
-      </div>
-    </div>
-    <div class="actions" style="margin-top:.85rem">
+    <div class="actions">
       <button class="btn-success" onclick="triggerRecovery('start')">&#9654; BackupPC starten</button>
       <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; BackupPC beenden</button>
       <button id="recovery-open-btn" class="btn-primary" onclick="openRecoveryUI()" style="display:none">&#10548; BackupPC UI öffnen</button>
@@ -561,11 +542,6 @@ function statusBadgeClass(s) {
   return 'badge badge-' + (map[s] || 'unbekannt');
 }
 
-function getSelectedSnapshot() {
-  const el = document.querySelector('input[name="snapshot"]:checked');
-  return el ? el.value : '';
-}
-
 async function loadStatus() {
   try {
     const [s, o] = await Promise.all([
@@ -605,32 +581,6 @@ async function loadLog(showFeedback=false) {
   } catch(e) { document.getElementById('log-content').textContent = 'Fehler beim Laden: ' + e; }
 }
 
-async function loadSnapshots() {
-  const el = document.getElementById('snapshots-content');
-  const prevSelected = getSelectedSnapshot();
-  el.innerHTML = '<em style="color:#aaa;font-size:.88rem;padding:.5rem 0;display:block">Lade...</em>';
-  try {
-    const d = await fetch(base + '/api/backups').then(r => r.json());
-    if (d.error) {
-      el.innerHTML = `<div class="radio-list"><label class="radio-item radio-item-live"><input type="radio" name="snapshot" value="" checked><span class="snap-name">Live-Daten (aktuell)</span></label></div><p style="color:red;font-size:.85rem;margin-top:.5rem">${d.error}</p>`;
-      return;
-    }
-    const snaps = (d.snapshots || []).sort((a, b) => new Date(b.created) - new Date(a.created));
-    const liveChecked = !prevSelected || !snaps.find(s => s.name === prevSelected);
-    let html = '<div class="radio-list">'
-      + `<label class="radio-item radio-item-live"><input type="radio" name="snapshot" value=""${liveChecked ? ' checked' : ''}><span class="snap-name">Live-Daten (aktuell)</span></label>`
-      + snaps.map(s => {
-          const checked = s.name === prevSelected ? ' checked' : '';
-          return `<label class="radio-item"><input type="radio" name="snapshot" value="${s.name||''}"${checked}><span class="snap-name">${s.name||''}</span><span class="snap-date">${fmtDate(s.created)}</span></label>`;
-        }).join('')
-      + '</div>';
-    if (!snaps.length) html += '<p style="color:#aaa;font-size:.85rem;margin-top:.4rem">Keine Snapshots vorhanden</p>';
-    el.innerHTML = html;
-  } catch(e) {
-    el.innerHTML = `<div class="radio-list"><label class="radio-item radio-item-live"><input type="radio" name="snapshot" value="" checked><span class="snap-name">Live-Daten (aktuell)</span></label></div><p style="color:red;font-size:.85rem;margin-top:.5rem">Fehler: ${e}</p>`;
-  }
-}
-
 async function triggerBackup() {
   if (!confirm('Backup jetzt manuell starten?')) return;
   const d = await fetch(base + '/api/backup', {method:'POST'}).then(r => r.json());
@@ -639,12 +589,9 @@ async function triggerBackup() {
 }
 
 async function triggerRecovery(action) {
-  const snapshot = getSelectedSnapshot();
   const label = action === 'start' ? 'starten' : 'beenden';
-  const src = (action === 'start') ? (snapshot ? `Snapshot: ${snapshot}` : 'Live-Daten') : '';
-  const msg = src ? `BackupPC Recovery Umgebung ${label}?\n\nDatenquelle: ${src}` : `BackupPC Recovery Umgebung ${label}?`;
-  if (!confirm(msg)) return;
-  const body = action === 'start' ? {snapshot_name: snapshot} : {};
+  if (!confirm(`BackupPC Recovery Umgebung ${label}?`)) return;
+  const body = action === 'start' ? {snapshot_name: ''} : {};
   const d = await fetch(base + `/api/recovery/${action}`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -677,7 +624,7 @@ async function saveKeys() {
   } catch(e) { showMsg('Fehler: ' + e, 5000); }
 }
 
-loadStatus(); loadLog(); loadSnapshots();
+loadStatus(); loadLog();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
 </script>
