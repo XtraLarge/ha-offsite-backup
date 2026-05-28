@@ -63,13 +63,11 @@ SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
 
 if [[ -n "$SNAPSHOT_NAME" ]]; then
   OFFSITE_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
-  IMPORT_FLAG="/data/config-imported-v2-$(echo "$SNAPSHOT_NAME" | tr -cd '[:alnum:].-')"
   echo "BackupPC Umgebung startet (Snapshot-Modus)"
   echo "  Offsite:  ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
   echo "  Snapshot: ${SNAPSHOT_NAME}"
 else
   OFFSITE_SOURCE="/home/ZPool"
-  IMPORT_FLAG="/data/config-imported-v2"
   echo "BackupPC Umgebung startet (Live-Modus)"
   echo "  Offsite: ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
 fi
@@ -110,15 +108,12 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Offsite gemountet: $SSHFS_MOUNT (${OFFSITE_SOURCE})"
 fi
 
-# ── BackupPC-Config importieren (einmalig) ────────────────────────────────────
-if [[ ! -f "$IMPORT_FLAG" ]]; then
-  echo "Importiere BackupPC-Config von Hetzner..."
-  rm -rf "${BACKUPPC_CONF:?}/"*
-  cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
-  cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." /home/backuppc/ 2>/dev/null || true
-  touch "$IMPORT_FLAG"
-  echo "Config importiert."
-fi
+# ── BackupPC-Config importieren (bei jedem Start frisch von SSHFS) ───────────
+echo "Importiere BackupPC-Config von Offsite..."
+rm -rf "${BACKUPPC_CONF:?}/"*
+cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
+cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." /home/backuppc/ 2>/dev/null || true
+echo "Config importiert."
 
 # TopDir auf SSHFS-Mount setzen
 perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \

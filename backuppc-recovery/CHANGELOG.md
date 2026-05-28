@@ -1,3 +1,9 @@
+## 2.0.8
+
+- Config-Import-Flag komplett entfernt — Config wird bei jedem Start frisch von SSHFS importiert
+- Grund: Flag überlebt Container-Rebuilds (Docker-Volume persistent), `/etc/backuppc` im Container aber nicht → nach Add-on-Update lief BackupPC mit Default-Config ohne Hosts
+- Für eine Recovery-Umgebung ist "immer frisch importieren" korrekt: kein veralteter Zustand möglich
+
 ## 2.0.7
 
 - `BackupsDisable=2` jetzt zuverlässig gesetzt: vorhandene Einträge in importierter Config werden vor dem Anhängen entfernt — bisher wurde `= 2` übersprungen wenn Hetzner-Config bereits `BackupsDisable = 0` enthielt
