@@ -42,7 +42,18 @@ def _find_recovery_slug():
     return "local_backuppc_recovery"
 
 
-RECOVERY_ADDON_SLUG = _find_recovery_slug()
+RECOVERY_ADDON_SLUG = "3e98a749_backuppc_recovery"
+
+
+def _update_recovery_slug():
+    global RECOVERY_ADDON_SLUG
+    slug = _find_recovery_slug()
+    if slug != RECOVERY_ADDON_SLUG:
+        log.info("Recovery-Slug aktualisiert: %s → %s", RECOVERY_ADDON_SLUG, slug)
+        RECOVERY_ADDON_SLUG = slug
+
+
+threading.Thread(target=_update_recovery_slug, daemon=True).start()
 
 _mqtt_client = None
 
@@ -99,12 +110,10 @@ def is_recovery_running():
         return False
 
 
-RECOVERY_STATUS_URL = f"http://{RECOVERY_ADDON_SLUG.replace('_', '-')}.local.hass.io:9080/"
-
-
 def get_recovery_datastand():
+    url = f"http://{RECOVERY_ADDON_SLUG.replace('_', '-')}.local.hass.io:9080/"
     try:
-        with urllib.request.urlopen(RECOVERY_STATUS_URL, timeout=3) as r:
+        with urllib.request.urlopen(url, timeout=3) as r:
             return json.loads(r.read()).get("datastand", "")
     except Exception:
         return ""
@@ -486,28 +495,7 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
-  <!-- Karte 3: SSH Keys -->
-  <div class="card" id="settings-card">
-    <div class="card-header"><h2>SSH Keys</h2></div>
-    <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
-      Keys werden nie angezeigt &mdash; nur ausfüllen zum Ändern. Mehrzeilig einfügen, wird intern mit <code>\n</code> kodiert gespeichert.
-    </p>
-    <div style="display:grid;gap:.75rem">
-      <div>
-        <label style="font-size:.85rem;color:#555;display:block;margin-bottom:.3rem">ssh_key_storage (NAS &rarr; Hetzner)</label>
-        <textarea id="key-storage" rows="8" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" style="width:100%;font-family:monospace;font-size:.78rem;padding:.5rem;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>
-      </div>
-      <div>
-        <label style="font-size:.85rem;color:#555;display:block;margin-bottom:.3rem">ssh_key_offsite (Recovery &rarr; Hetzner)</label>
-        <textarea id="key-offsite" rows="8" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" style="width:100%;font-family:monospace;font-size:.78rem;padding:.5rem;border:1px solid #ddd;border-radius:4px;resize:vertical"></textarea>
-      </div>
-    </div>
-    <div class="actions">
-      <button class="btn-primary" onclick="saveKeys()">&#128190; Keys speichern</button>
-    </div>
-  </div>
-
-  <!-- Karte 4: Log -->
+  <!-- Karte 3: Log -->
   <div class="card">
     <div class="card-header">
       <h2>Log (letzte 100 Zeilen)</h2>
@@ -606,24 +594,6 @@ function openRecoveryUI() {
   if (url) window.open(url, '_blank');
 }
 
-async function saveKeys() {
-  const storage = document.getElementById('key-storage').value.trim();
-  const offsite = document.getElementById('key-offsite').value.trim();
-  if (!storage && !offsite) { showMsg('Keine Änderungen (Felder leer)', 2000); return; }
-  const payload = {};
-  if (storage) payload.ssh_key_storage = storage.replace(/\n/g, '\\n');
-  if (offsite) payload.ssh_key_offsite = offsite.replace(/\n/g, '\\n');
-  try {
-    const d = await fetch(base + '/api/options', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    }).then(r => r.json());
-    showMsg(d.message || (d.ok ? 'Gespeichert' : 'Fehler'), 4000);
-    if (d.ok) { document.getElementById('key-storage').value = ''; document.getElementById('key-offsite').value = ''; }
-  } catch(e) { showMsg('Fehler: ' + e, 5000); }
-}
-
 loadStatus(); loadLog();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
@@ -692,19 +662,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/backup":
             ok_flag, msg = trigger_backup()
             self._json({"ok": ok_flag, "message": msg})
-        elif path == "/api/options":
-            _allowed = {"ssh_key_storage", "ssh_key_offsite"}
-            updates = {k: v for k, v in body.items() if k in _allowed}
-            if not updates:
-                self._json({"ok": False, "message": "Keine erlaubten Felder übergeben"}, 400)
-                return
-            try:
-                current = read_options()
-                current.update(updates)
-                _supervisor_request("POST", "/addons/self/options", {"options": current})
-                self._json({"ok": True, "message": f"Gespeichert: {', '.join(updates.keys())}"})
-            except Exception as e:
-                self._json({"ok": False, "message": str(e)}, 500)
         elif path == "/api/recovery/start":
             ok_flag, msg = trigger_recovery("start", body.get("snapshot_name", ""))
             self._json({"ok": ok_flag, "message": msg})
