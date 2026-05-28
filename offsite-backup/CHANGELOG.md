@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.37 - 2026-05-28
+
+### Geändert
+- SSH-Key-Karte aus Dashboard entfernt — Keys werden nur noch in der HA Add-on-Konfiguration gesetzt
+- `POST /api/options` Endpunkt entfernt (nicht mehr benötigt)
+- Recovery-Slug-Erkennung läuft jetzt im Hintergrund-Thread → HTTP-Server startet sofort, kein 10-Sekunden-Block beim Add-on-Start
+
 ## 1.2.36 - 2026-05-28
 
 ### Geändert
