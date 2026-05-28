@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Publiziert BackupPC-Umgebungs-Status via MQTT Auto-Discovery."""
+"""Publiziert BackupPC-Umgebungs-Status via MQTT Auto-Discovery + HTTP-Status."""
 import json
 import logging
 import os
 import subprocess
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 OPTIONS_FILE = "/data/options.json"
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -100,12 +102,38 @@ def publish_state(client, url, source):
                    json.dumps(state, ensure_ascii=False), retain=True)
 
 
+def read_datastand():
+    try:
+        with open("/data/datastand") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def start_status_server(get_state_fn):
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps(get_state_fn(), ensure_ascii=False).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("", 9080), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 if __name__ == "__main__":
     time.sleep(5)
     opts = read_options()
 
     snapshot_name = opts.get("snapshot_name", "").strip()
+    datastand = read_datastand()
     source = f"Snapshot: {snapshot_name}" if snapshot_name else "Live-Daten"
+    if datastand:
+        source += f" · Backups bis {datastand}"
 
     try:
         import socket
@@ -113,6 +141,9 @@ if __name__ == "__main__":
     except Exception:
         ip = "<HA-IP>"
     url = f"http://{ip}:8080/BackupPC_Admin"
+
+    state_cache = {"datastand": datastand, "source": source, "url": url}
+    start_status_server(lambda: state_cache)
 
     client = start_mqtt(opts)
 
