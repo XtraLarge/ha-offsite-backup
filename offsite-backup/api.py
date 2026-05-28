@@ -393,7 +393,10 @@ DASHBOARD_HTML = """\
     header h1 { font-size: 1.2rem; font-weight: 600; }
     main { max-width: 960px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1rem; }
     .card { background: #fff; border-radius: 8px; padding: 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
-    .card h2 { font-size: .95rem; font-weight: 600; color: #555; margin-bottom: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+    .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+    .card-header h2 { font-size: .95rem; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+    .btn-icon { background: none; border: 1px solid #ddd; color: #888; border-radius: 50%; width: 28px; height: 28px; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1rem; line-height: 1; transition: background .15s, color .15s; flex-shrink: 0; }
+    .btn-icon:hover { background: #f0f0f0; color: #333; opacity: 1; }
     .row { display: flex; align-items: center; gap: .5rem; margin: .35rem 0; font-size: .9rem; }
     .label { color: #888; min-width: 110px; }
     .badge { padding: .2em .6em; border-radius: 4px; font-weight: 600; font-size: .82rem; }
@@ -409,12 +412,17 @@ DASHBOARD_HTML = """\
     .btn-danger  { background: #c62828; color: #fff; }
     .btn-secondary { background: #eee; color: #333; }
     pre { background: #1a1a2e; color: #a0d0a0; padding: 1rem; border-radius: 6px; font-size: .78rem; line-height: 1.45; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-word; }
-    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-    th { background: #f5f5f5; padding: .5rem .75rem; text-align: left; font-weight: 600; color: #555; }
-    td { padding: .45rem .75rem; border-top: 1px solid #eee; }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc; border-top-color: var(--run); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 4px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     code { background: #f5f5f5; padding: .1em .35em; border-radius: 3px; font-size: .85em; }
+    .radio-list { margin-top: .5rem; border: 1px solid #eee; border-radius: 6px; overflow: hidden; }
+    .radio-item { display: flex; align-items: center; gap: .6rem; padding: .5rem .75rem; border-top: 1px solid #eee; font-size: .88rem; cursor: pointer; transition: background .1s; }
+    .radio-item:first-child { border-top: none; }
+    .radio-item:hover { background: #f7f9fc; }
+    .radio-item input[type=radio] { margin: 0; flex-shrink: 0; cursor: pointer; }
+    .radio-item .snap-name { font-weight: 500; }
+    .radio-item .snap-date { color: #888; font-size: .82rem; margin-left: auto; }
+    .radio-item-live .snap-name { color: #388E3C; }
     #msg { position: fixed; bottom: 1.5rem; right: 1.5rem; background: #333; color: #fff; padding: .7rem 1.2rem; border-radius: 8px; display: none; font-size: .88rem; z-index: 999; }
   </style>
 </head>
@@ -425,49 +433,50 @@ DASHBOARD_HTML = """\
 </header>
 <main>
 
+  <!-- Karte 1: Status -->
   <div class="card" id="status-card">
-    <h2>Status</h2>
+    <div class="card-header"><h2>Status</h2></div>
     <div class="row"><span class="label">Letzter Lauf</span><span id="last-run">—</span></div>
     <div class="row"><span class="label">Ergebnis</span><span id="status-badge" class="badge">—</span></div>
-    <div class="row"><span class="label">NAS</span><code id="nas-host">—</code></div>
+    <div class="row"><span class="label">ZFS-Storage</span><code id="nas-host">—</code></div>
     <div class="row"><span class="label">Zeitplan</span><code id="schedule">—</code></div>
     <div class="row"><span class="label">Nächster Backup</span><span id="next-run">—</span></div>
     <div class="row"><span class="label">BackupPC</span><span id="recovery-status">—</span></div>
     <div class="actions">
       <button class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
-      <button class="btn-secondary" onclick="loadLog(true)">&#8635; Log aktualisieren</button>
     </div>
   </div>
 
+  <!-- Karte 2: BackupPC Recovery Umgebung + Snapshots -->
   <div class="card">
-    <h2>BackupPC Umgebung</h2>
-    <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
-      Startet die BackupPC-Oberfläche mit Hetzner-Daten via SSHFS.<br>
-      Lesezugriff auf alle Backups &mdash; keine neuen Sicherungen werden erstellt.
-    </p>
-    <div class="row" style="margin-bottom:.5rem">
-      <span class="label">Datenquelle</span>
-      <select id="snapshot-select" style="flex:1;padding:.4rem .6rem;border:1px solid #ddd;border-radius:6px;font-size:.88rem;background:#fff">
-        <option value="">Live-Daten (aktuell)</option>
-      </select>
+    <div class="card-header">
+      <h2>BackupPC Recovery Umgebung</h2>
+      <button class="btn-icon" onclick="loadSnapshots()" title="Snapshots aktualisieren">&#8635;</button>
     </div>
-    <div class="actions">
+    <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
+      Startet BackupPC via SSHFS &mdash; Lesezugriff auf alle Sicherungen, keine neuen Backups.
+    </p>
+    <div id="snapshots-content">
+      <div class="radio-list">
+        <label class="radio-item radio-item-live">
+          <input type="radio" name="snapshot" value="" checked>
+          <span class="snap-name">Live-Daten (aktuell)</span>
+        </label>
+      </div>
+    </div>
+    <div class="actions" style="margin-top:.85rem">
       <button class="btn-success" onclick="triggerRecovery('start')">&#9654; BackupPC starten</button>
       <button class="btn-danger"  onclick="triggerRecovery('stop')">&#9632; BackupPC beenden</button>
       <button id="recovery-open-btn" class="btn-primary" onclick="openRecoveryUI()" style="display:none">&#10548; BackupPC UI öffnen</button>
     </div>
   </div>
 
+  <!-- Karte 3: Log -->
   <div class="card">
-    <h2>Hetzner Snapshots</h2>
-    <div style="margin-bottom:.75rem">
-      <button class="btn-secondary" onclick="loadSnapshots()">&#128190; Snapshots aktualisieren</button>
+    <div class="card-header">
+      <h2>Log (letzte 100 Zeilen)</h2>
+      <button class="btn-icon" onclick="loadLog(true)" title="Log aktualisieren">&#8635;</button>
     </div>
-    <div id="snapshots-content"><em style="color:#aaa;font-size:.88rem">Noch nicht geladen</em></div>
-  </div>
-
-  <div class="card">
-    <h2>Log (letzte 100 Zeilen)</h2>
     <pre id="log-content">Lade...</pre>
   </div>
 
@@ -497,6 +506,11 @@ function statusBadgeClass(s) {
   return 'badge badge-' + (map[s] || 'unbekannt');
 }
 
+function getSelectedSnapshot() {
+  const el = document.querySelector('input[name="snapshot"]:checked');
+  return el ? el.value : '';
+}
+
 async function loadStatus() {
   try {
     const [s, o] = await Promise.all([
@@ -515,8 +529,8 @@ async function loadStatus() {
     const openBtn = document.getElementById('recovery-open-btn');
     if (s.recovery_running) {
       rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>läuft</span>';
-      const port = o.backuppc_port || 8900;
-      openBtn.dataset.url = `http://${location.hostname}:${port}`;
+      const port = o.backuppc_port || 8080;
+      openBtn.dataset.url = `http://${location.hostname}:${port}/BackupPC_Admin`;
       openBtn.style.display = 'inline-block';
     } else {
       rec.innerHTML = '<span class="badge badge-unbekannt">inaktiv</span>';
@@ -538,24 +552,28 @@ async function loadLog(showFeedback=false) {
 
 async function loadSnapshots() {
   const el = document.getElementById('snapshots-content');
-  el.innerHTML = '<em>Lade...</em>';
+  const prevSelected = getSelectedSnapshot();
+  el.innerHTML = '<em style="color:#aaa;font-size:.88rem;padding:.5rem 0;display:block">Lade...</em>';
   try {
     const d = await fetch(base + '/api/backups').then(r => r.json());
-    if (d.error) { el.innerHTML = `<span style="color:red">${d.error}</span>`; return; }
-    const snaps = (d.snapshots || []).sort((a, b) => new Date(b.created) - new Date(a.created));
-    if (!snaps.length) { el.innerHTML = '<em style="color:#aaa">Keine Snapshots vorhanden</em>'; return; }
-    el.innerHTML = '<table><thead><tr><th>Name</th><th>Erstellt</th><th>Beschreibung</th></tr></thead><tbody>'
-      + snaps.map(s => `<tr><td><code>${s.name||''}</code></td><td>${fmtDate(s.created)}</td><td>${s.description||''}</td></tr>`).join('')
-      + '</tbody></table>';
-    // Dropdown in BackupPC-Card befüllen
-    const sel = document.getElementById('snapshot-select');
-    if (sel) {
-      const prev = sel.value;
-      sel.innerHTML = '<option value="">Live-Daten (aktuell)</option>'
-        + snaps.map(s => `<option value="${s.name||''}">${s.name||''} &mdash; ${fmtDate(s.created)}</option>`).join('');
-      if (prev) sel.value = prev;
+    if (d.error) {
+      el.innerHTML = `<div class="radio-list"><label class="radio-item radio-item-live"><input type="radio" name="snapshot" value="" checked><span class="snap-name">Live-Daten (aktuell)</span></label></div><p style="color:red;font-size:.85rem;margin-top:.5rem">${d.error}</p>`;
+      return;
     }
-  } catch(e) { el.innerHTML = `<span style="color:red">Fehler: ${e}</span>`; }
+    const snaps = (d.snapshots || []).sort((a, b) => new Date(b.created) - new Date(a.created));
+    const liveChecked = !prevSelected || !snaps.find(s => s.name === prevSelected);
+    let html = '<div class="radio-list">'
+      + `<label class="radio-item radio-item-live"><input type="radio" name="snapshot" value=""${liveChecked ? ' checked' : ''}><span class="snap-name">Live-Daten (aktuell)</span></label>`
+      + snaps.map(s => {
+          const checked = s.name === prevSelected ? ' checked' : '';
+          return `<label class="radio-item"><input type="radio" name="snapshot" value="${s.name||''}"${checked}><span class="snap-name">${s.name||''}</span><span class="snap-date">${fmtDate(s.created)}</span></label>`;
+        }).join('')
+      + '</div>';
+    if (!snaps.length) html += '<p style="color:#aaa;font-size:.85rem;margin-top:.4rem">Keine Snapshots vorhanden</p>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div class="radio-list"><label class="radio-item radio-item-live"><input type="radio" name="snapshot" value="" checked><span class="snap-name">Live-Daten (aktuell)</span></label></div><p style="color:red;font-size:.85rem;margin-top:.5rem">Fehler: ${e}</p>`;
+  }
 }
 
 async function triggerBackup() {
@@ -566,11 +584,10 @@ async function triggerBackup() {
 }
 
 async function triggerRecovery(action) {
-  const sel = document.getElementById('snapshot-select');
-  const snapshot = sel ? sel.value : '';
+  const snapshot = getSelectedSnapshot();
   const label = action === 'start' ? 'starten' : 'beenden';
   const src = (action === 'start') ? (snapshot ? `Snapshot: ${snapshot}` : 'Live-Daten') : '';
-  const msg = src ? `BackupPC Umgebung ${label}?\n\nDatenquelle: ${src}` : `BackupPC Umgebung ${label}?`;
+  const msg = src ? `BackupPC Recovery Umgebung ${label}?\n\nDatenquelle: ${src}` : `BackupPC Recovery Umgebung ${label}?`;
   if (!confirm(msg)) return;
   const body = action === 'start' ? {snapshot_name: snapshot} : {};
   const d = await fetch(base + `/api/recovery/${action}`, {
@@ -587,7 +604,6 @@ function openRecoveryUI() {
   if (url) window.open(url, '_blank');
 }
 
-// Initial laden
 loadStatus(); loadLog(); loadSnapshots();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.32 - 2026-05-28
+
+### Geändert
+- Dashboard neu strukturiert: 3 Karten statt 4 (Status, BackupPC Recovery Umgebung, Log)
+- "BackupPC Umgebung" + "Hetzner Snapshots" zu "BackupPC Recovery Umgebung" zusammengeführt
+- Snapshot-Auswahl: Radio-Buttons statt Dropdown + separater Snapshot-Tabelle
+- "Live-Daten (aktuell)" als erste Radio-Option
+- Snapshots aktualisieren: kleines ↻-Icon oben rechts im Karten-Header
+- Log aktualisieren: kleines ↻-Icon oben rechts im Log-Karten-Header (weg aus Status)
+- BackupPC-UI-Link öffnet direkt `/BackupPC_Admin` (korrekter Port 8080)
+
 ## 1.2.31 - 2026-05-27
 
 ### Geändert
