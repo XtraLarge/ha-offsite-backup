@@ -1,10 +1,11 @@
 name: BackupPC Recovery
-version: "2.0.4"
+version: "2.0.5"
 slug: backuppc_recovery
 description: BackupPC4 Recovery-Umgebung via Offsite Storage Box (SSHFS). Nur bei Bedarf starten.
 url: https://github.com/XtraLarge/ha-offsite-backup
 arch:
   - amd64
+  - aarch64
 init: false
 
 options:

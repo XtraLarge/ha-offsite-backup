@@ -1,3 +1,7 @@
+## 2.0.5
+
+- `aarch64` (ARM64/Raspberry Pi) als unterstützte Architektur ergänzt
+
 ## 2.0.4
 
 - Optionsnamen umbenannt: `hetzner_user/host/port` → `offsite_user/host/port`, `ssh_key_hetzner` → `ssh_key_offsite`
