@@ -108,14 +108,7 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Offsite gemountet: $SSHFS_MOUNT (${OFFSITE_SOURCE})"
 fi
 
-# ── Datenstand + Diagnose ─────────────────────────────────────────────────────
-echo "--- Inhalt SSHFS-Mount ---"
-ls "${SSHFS_MOUNT}/" 2>/dev/null || echo "(leer oder nicht lesbar)"
-echo "--- BackupPC-Pool ---"
-ls "${SSHFS_MOUNT}/BackupPC/" 2>/dev/null || echo "(kein BackupPC-Verzeichnis)"
-echo "--- Hosts ---"
-ls "${SSHFS_MOUNT}/BackupPC/pc/" 2>/dev/null || echo "(kein pc-Verzeichnis)"
-
+# ── Datenstand ────────────────────────────────────────────────────────────────
 DATASTAND="unbekannt"
 PC_DIR="${SSHFS_MOUNT}/BackupPC/pc"
 if [[ -d "$PC_DIR" ]]; then
@@ -134,11 +127,11 @@ cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
 cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." /home/backuppc/ 2>/dev/null || true
 echo "Config importiert."
 
-# TopDir auf SSHFS-Mount setzen
-perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
-  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
-  echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
-echo "TopDir gesetzt: $(grep 'TopDir' "${BACKUPPC_CONF}/config.pl" | tail -1)"
+# TopDir setzen (bestehende Einträge entfernen, dann anhängen — wie BackupsDisable)
+perl -i -pe "s/^\s*\\\$Conf\{TopDir\}\s*=.*//" \
+  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
+printf '\n$Conf{TopDir} = "%s/BackupPC";\n' "$SSHFS_MOUNT" >> "${BACKUPPC_CONF}/config.pl"
+echo "TopDir gesetzt auf: ${SSHFS_MOUNT}/BackupPC"
 
 # Neue Sicherungen immer deaktivieren (vorhandene Einträge entfernen, dann anhängen)
 perl -i -pe "s/^\\\$Conf\{BackupsDisable\}.*$//" \
