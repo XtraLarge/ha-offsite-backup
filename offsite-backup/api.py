@@ -76,6 +76,17 @@ def is_recovery_running():
         return False
 
 
+RECOVERY_STATUS_URL = "http://3e98a749-backuppc-recovery.local.hass.io:9080/"
+
+
+def get_recovery_datastand():
+    try:
+        with urllib.request.urlopen(RECOVERY_STATUS_URL, timeout=3) as r:
+            return json.loads(r.read()).get("datastand", "")
+    except Exception:
+        return ""
+
+
 def get_next_run():
     opts = read_options()
     schedule = opts.get("backup_schedule", "")

@@ -108,6 +108,25 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Offsite gemountet: $SSHFS_MOUNT (${OFFSITE_SOURCE})"
 fi
 
+# ── Datenstand + Diagnose ─────────────────────────────────────────────────────
+echo "--- Inhalt SSHFS-Mount ---"
+ls "${SSHFS_MOUNT}/" 2>/dev/null || echo "(leer oder nicht lesbar)"
+echo "--- BackupPC-Pool ---"
+ls "${SSHFS_MOUNT}/BackupPC/" 2>/dev/null || echo "(kein BackupPC-Verzeichnis)"
+echo "--- Hosts ---"
+ls "${SSHFS_MOUNT}/BackupPC/pc/" 2>/dev/null || echo "(kein pc-Verzeichnis)"
+
+DATASTAND="unbekannt"
+PC_DIR="${SSHFS_MOUNT}/BackupPC/pc"
+if [[ -d "$PC_DIR" ]]; then
+  NEWEST_HOST=$(ls -dt "$PC_DIR"/*/ 2>/dev/null | head -1)
+  if [[ -n "$NEWEST_HOST" ]]; then
+    DATASTAND=$(date -r "$NEWEST_HOST" '+%d.%m.%Y %H:%M' 2>/dev/null || echo "unbekannt")
+  fi
+fi
+echo "Datenstand: Letztes Host-Backup: $DATASTAND"
+echo "$DATASTAND" > /data/datastand
+
 # ── BackupPC-Config importieren (bei jedem Start frisch von SSHFS) ───────────
 echo "Importiere BackupPC-Config von Offsite..."
 rm -rf "${BACKUPPC_CONF:?}/"*
@@ -119,6 +138,7 @@ echo "Config importiert."
 perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';|" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
   echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
+echo "TopDir gesetzt: $(grep 'TopDir' "${BACKUPPC_CONF}/config.pl" | tail -1)"
 
 # Neue Sicherungen immer deaktivieren (vorhandene Einträge entfernen, dann anhängen)
 perl -i -pe "s/^\\\$Conf\{BackupsDisable\}.*$//" \
