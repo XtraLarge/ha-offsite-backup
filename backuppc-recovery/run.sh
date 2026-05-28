@@ -96,7 +96,7 @@ if ! mountpoint -q "$SSHFS_MOUNT"; then
   echo "Mounte SSHFS: ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_SOURCE} → $SSHFS_MOUNT"
   set +e
   SSHFS_OUT=$(sshfs -p "$OFFSITE_PORT" \
-    -o "${SSH_OPTS},allow_other" \
+    -o "${SSH_OPTS},allow_other,ro" \
     "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_SOURCE}" "$SSHFS_MOUNT" 2>&1)
   SSHFS_RC=$?
   set -e

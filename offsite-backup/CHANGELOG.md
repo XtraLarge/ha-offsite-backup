@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.33 - 2026-05-28
+
+### Geändert
+- Dashboard: SSH-Key-Eingabe als mehrzeilige Textareas (Karte 3 "SSH Keys")
+- Keys werden mit `\n`-Kodierung gespeichert (HA-Kompatibilität) — `printf '%b\n'` in run.sh konvertiert korrekt zurück
+- Neuer POST `/api/options` Endpoint: aktualisiert `ssh_key_storage`/`ssh_key_offsite` via Supervisor API
+
 ## 1.2.32 - 2026-05-28
 
 ### Geändert
