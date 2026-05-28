@@ -1,3 +1,7 @@
+## 2.0.12
+
+- SSHFS als read-only (`ro`) gemountet — verhindert dass Recovery-BackupPC LOCK-Dateien und andere Schreiboperationen auf Hetzner ausführt und dabei laufende rsync-Transfers stört
+
 ## 2.0.11
 
 - `$Conf{LogDir}` auf `/data/backuppc/log` (lokal) gesetzt — verhindert dass Recovery-BackupPC seine Logs auf Hetzner (SSHFS/TopDir) schreibt und dort Produktionslogs überschreibt
