@@ -1,3 +1,7 @@
+## 2.0.11
+
+- `$Conf{LogDir}` auf `/data/backuppc/log` (lokal) gesetzt — verhindert dass Recovery-BackupPC seine Logs auf Hetzner (SSHFS/TopDir) schreibt und dort Produktionslogs überschreibt
+
 ## 2.0.10
 
 - TopDir-Setzen: Perl-Regex `^\$Conf{TopDir}` matcht nicht wenn config.pl eingerückte Zeilen verwendet (adferrand/BackupPC-Standard) → TopDir zeigte auf NAS-Pfad der im Container nicht existiert → BackupPC las falschen Pool
