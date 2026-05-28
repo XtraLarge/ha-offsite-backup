@@ -117,12 +117,34 @@ run_rsync() {
   done
 }
 
+zfs_destroy_retry() {
+  local snap="$1" i
+  for i in 1 2 3; do
+    if run_root zfs destroy "$snap" 2>/dev/null; then
+      echo "$(date '+%F %T'): Snapshot gelöscht: $snap"
+      return 0
+    fi
+    echo "$(date '+%F %T'): Snapshot busy, Versuch $i/3 – warte 30s: $snap"
+    sleep 30
+  done
+  echo "$(date '+%F %T'): Snapshot noch busy – deferred destroy: $snap"
+  run_root zfs destroy -d "$snap"
+}
+
+# Vorhandene pre_rsync-Snapshots im Log anzeigen (Diagnose)
+existing="$(run_root zfs list -H -t snapshot -o name,defer_destroy -s creation -r "$DATASET" \
+  | grep -E "^${DATASET}@pre_rsync" || true)"
+if [[ -n "$existing" ]]; then
+  echo "$(date '+%F %T'): Gefundene pre_rsync-Snapshots vor Cleanup:"
+  echo "$existing" | while IFS= read -r line; do echo "  $line"; done
+fi
+
 # Alte pre_rsync Snapshots löschen
 { run_root zfs list -H -t snapshot -o name -s creation -r "$DATASET" \
     | grep -E "^${DATASET}@pre_rsync" || true; } \
 | while IFS= read -r snap; do
     [[ -z "$snap" ]] && continue
-    echo "Lösche Snapshot: $snap"; run_root zfs destroy "$snap"
+    zfs_destroy_retry "$snap"
   done
 
 SNAP="pre_rsync_$(date +%F_%H-%M-%S)"
@@ -132,7 +154,7 @@ run_root zfs snapshot "${DATASET}@${SNAP}"
 
 run_rsync "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/BackupPC/"
 echo "$(date '+%F %T'): Snapshot löschen: ${DATASET}@${SNAP}"
-run_root zfs destroy "${DATASET}@${SNAP}"
+zfs_destroy_retry "${DATASET}@${SNAP}"
 
 run_rsync "/ZPool/Docker/backuppc/"     "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/backuppc/"
 run_rsync "/ZPool/Docker/_DockerCreate/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/_DockerCreate/"
