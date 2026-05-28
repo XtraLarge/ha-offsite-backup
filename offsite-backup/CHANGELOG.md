@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.34 - 2026-05-28
+
+### Geändert
+- `RECOVERY_ADDON_SLUG` und `RECOVERY_STATUS_URL` auf `local_backuppc_recovery` / `local-backuppc-recovery` aktualisiert (Add-ons jetzt als lokale Add-ons installiert statt aus GitHub-Repository)
+
 ## 1.2.33 - 2026-05-28
 
 ### Geändert

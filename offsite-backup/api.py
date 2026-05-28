@@ -16,7 +16,7 @@ OPTIONS_FILE = "/data/options.json"
 LOG_FILE = "/data/logs/backup.log"
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
-RECOVERY_ADDON_SLUG = "3e98a749_backuppc_recovery"
+RECOVERY_ADDON_SLUG = "local_backuppc_recovery"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
@@ -76,7 +76,7 @@ def is_recovery_running():
         return False
 
 
-RECOVERY_STATUS_URL = "http://3e98a749-backuppc-recovery.local.hass.io:9080/"
+RECOVERY_STATUS_URL = "http://local-backuppc-recovery.local.hass.io:9080/"
 
 
 def get_recovery_datastand():
