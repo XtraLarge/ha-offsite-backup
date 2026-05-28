@@ -1,3 +1,7 @@
+## 2.0.7
+
+- `BackupsDisable=2` jetzt zuverlässig gesetzt: vorhandene Einträge in importierter Config werden vor dem Anhängen entfernt — bisher wurde `= 2` übersprungen wenn Hetzner-Config bereits `BackupsDisable = 0` enthielt
+
 ## 2.0.6
 
 - SSH-Key-Schreiben: `printf '%b\n'` statt `jq -r ... > file` — HA-UI speichert Keys einzeilig mit `\n`-Literalen statt echten Newlines; `printf '%b'` konvertiert diese korrekt, `jq -r` ließ sie unverändert → libcrypto-Fehler / SSHFS "Connection reset by peer"
