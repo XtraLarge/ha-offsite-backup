@@ -1,3 +1,13 @@
+## 2.0.10
+
+- TopDir-Setzen: Perl-Regex `^\$Conf{TopDir}` matcht nicht wenn config.pl eingerückte Zeilen verwendet (adferrand/BackupPC-Standard) → TopDir zeigte auf NAS-Pfad der im Container nicht existiert → BackupPC las falschen Pool
+- Fix: Gleiches Muster wie BackupsDisable/CgiAdminUsers: erst alle `$Conf{TopDir}`-Zeilen entfernen, dann korrekte Zeile anhängen
+
+## 2.0.9
+
+- Datenstand (neuestes Host-Backup) beim Start ermitteln + in `/data/datastand` schreiben
+- state.py: Datenstand per HTTP auf Port 9080 exponieren + in MQTT-Sensor einbinden
+
 ## 2.0.8
 
 - Config-Import-Flag komplett entfernt — Config wird bei jedem Start frisch von SSHFS importiert
