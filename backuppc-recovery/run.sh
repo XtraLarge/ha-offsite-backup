@@ -143,6 +143,13 @@ perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
 printf '\n$Conf{CgiAdminUsers} = "backuppc";\n' >> "${BACKUPPC_CONF}/config.pl"
 
+# LogDir lokal setzen — verhindert dass Recovery-Logs auf Hetzner (SSHFS) landen
+mkdir -p /data/backuppc/log
+perl -i -pe "s/^\s*\\\$Conf\{LogDir\}\s*=.*//" \
+  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
+printf '\n$Conf{LogDir} = "/data/backuppc/log";\n' >> "${BACKUPPC_CONF}/config.pl"
+echo "LogDir gesetzt auf: /data/backuppc/log (lokal, nicht auf Hetzner)"
+
 # Berechtigungen
 chown -R 1000:1000 "$BACKUPPC_CONF" /home/backuppc /data/backuppc 2>/dev/null || true
 
