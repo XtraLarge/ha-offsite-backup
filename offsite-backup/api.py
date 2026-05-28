@@ -16,10 +16,33 @@ OPTIONS_FILE = "/data/options.json"
 LOG_FILE = "/data/logs/backup.log"
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
-RECOVERY_ADDON_SLUG = "local_backuppc_recovery"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
+
+
+def _find_recovery_slug():
+    token = os.environ.get("SUPERVISOR_TOKEN", "").strip()
+    if not token:
+        return "local_backuppc_recovery"
+    try:
+        req = urllib.request.Request(
+            "http://supervisor/addons",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        for addon in data.get("data", {}).get("addons", []):
+            slug = addon.get("slug", "")
+            if "backuppc_recovery" in slug:
+                log.info("Recovery-Slug gefunden: %s", slug)
+                return slug
+    except Exception as e:
+        log.warning("Recovery-Slug-Erkennung fehlgeschlagen: %s", e)
+    return "local_backuppc_recovery"
+
+
+RECOVERY_ADDON_SLUG = _find_recovery_slug()
 
 _mqtt_client = None
 
@@ -76,7 +99,7 @@ def is_recovery_running():
         return False
 
 
-RECOVERY_STATUS_URL = "http://local-backuppc-recovery.local.hass.io:9080/"
+RECOVERY_STATUS_URL = f"http://{RECOVERY_ADDON_SLUG.replace('_', '-')}.local.hass.io:9080/"
 
 
 def get_recovery_datastand():
