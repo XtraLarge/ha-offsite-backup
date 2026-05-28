@@ -125,9 +125,10 @@ perl -i -pe "s|^\\\$Conf\{TopDir\}.*|\\\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || \
   echo "\$Conf{TopDir} = '${SSHFS_MOUNT}/BackupPC';" >> "${BACKUPPC_CONF}/config.pl"
 
-# Neue Sicherungen deaktivieren (letzter Eintrag gewinnt in Perl)
-grep -qF 'BackupsDisable' "${BACKUPPC_CONF}/config.pl" \
-  || printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
+# Neue Sicherungen immer deaktivieren (vorhandene Einträge entfernen, dann anhängen)
+perl -i -pe "s/^\\\$Conf\{BackupsDisable\}.*$//" \
+  "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
+printf '\n$Conf{BackupsDisable} = 2;\n' >> "${BACKUPPC_CONF}/config.pl"
 
 # CgiAdminUsers sicherstellen
 perl -i -pe "s/^\\\$Conf\{CgiAdminUsers\}.*$//" \
