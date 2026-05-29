@@ -14,6 +14,8 @@ PORT = 8099
 INGRESS_PATH = os.environ.get("INGRESS_PATH", "")
 OPTIONS_FILE = "/data/options.json"
 LOG_FILE = "/data/logs/backup.log"
+RUNS_DIR = "/data/logs/runs"
+RUNS_KEEP = 20
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
 SECRETS_DIR = "/data/secrets"
@@ -79,6 +81,32 @@ def read_log(lines=100):
         return []
 
 
+def _latest_run_file():
+    """Neuestes archiviertes Run-Log in RUNS_DIR (oder None)."""
+    try:
+        files = sorted(
+            n for n in os.listdir(RUNS_DIR)
+            if n.startswith("backup-") and n.endswith(".log")
+        )
+        return os.path.join(RUNS_DIR, files[-1]) if files else None
+    except Exception:
+        return None
+
+
+def read_finished_log(lines=100):
+    """Idle-Ansicht: das vollständige, archivierte run.log des letzten Laufs
+    bevorzugen (auch wenn der Live-Spiegel backup.log durch einen Container-
+    Neustart abgeschnitten wurde). Fällt auf backup.log zurück."""
+    path = _latest_run_file()
+    if path:
+        try:
+            with open(path) as f:
+                return f.readlines()[-lines:]
+        except Exception:
+            pass
+    return read_log(lines)
+
+
 _log_cache = {"ts": 0.0, "lines": None}
 
 
@@ -87,7 +115,7 @@ def get_log_lines(lines=100):
     Dashboard auch dann aktuell ist, wenn die Tail-Pipe des Launchers durch ein
     Netzwerk-/Container-Problem abgerissen ist). Sonst die lokale Logdatei."""
     if not is_backup_running():
-        return read_log(lines)
+        return read_finished_log(lines)
     now = time.time()
     if now - _log_cache["ts"] < 8 and _log_cache["lines"] is not None:
         return _log_cache["lines"]
@@ -278,41 +306,84 @@ def _run_backup():
         _mqtt_client.publish_state()
 
 
+def _archive_run_log(status, ec, log_text):
+    """Schreibt das vollständige NAS-run.log nach Abschluss persistent nach
+    RUNS_DIR und rotiert auf die letzten RUNS_KEEP Läufe. So bleibt jeder Lauf
+    auf hassio nachvollziehbar – auch wenn der Live-Spiegel backup.log durch
+    einen Container-Neustart abgeschnitten wurde."""
+    try:
+        os.makedirs(RUNS_DIR, exist_ok=True)
+        ts = datetime.now().astimezone()
+        header = (
+            f"# Offsite Backup – abgeschlossener Lauf\n"
+            f"# status: {status} (rc={ec or '?'})\n"
+            f"# finalisiert: {ts.isoformat()}\n"
+            f"{'#' * 60}\n"
+        )
+        with open(os.path.join(RUNS_DIR, ts.strftime("backup-%Y%m%d_%H%M%S.log")), "w") as f:
+            f.write(header)
+            f.write(log_text if log_text else "(kein Log von der NAS erhalten)\n")
+        files = sorted(
+            os.path.join(RUNS_DIR, n) for n in os.listdir(RUNS_DIR)
+            if n.startswith("backup-") and n.endswith(".log")
+        )
+        for old in files[:-RUNS_KEEP]:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
+    except Exception as e:
+        log.warning("Run-Log-Archiv fehlgeschlagen: %s", e)
+
+
 def _finalize_from_nas():
-    """Wird aufgerufen, wenn die NAS-screen-Session endet, der lokale Launcher
-    (backup.sh) aber nicht mehr läuft – z. B. weil der Container während des
-    Laufs neugestartet wurde. Liest den Exit-Code aus dem RunDir, schreibt
-    status.json und räumt das tmpfs-RunDir auf. Hat der Launcher bereits
-    aufgeräumt (RunDir weg), passiert nichts."""
+    """Alleiniger Abschluss-Besitzer eines NAS-Laufs (läuft im langlebigen
+    api.py-Prozess, überlebt also einen Container-Neustart, der den Launcher
+    backup.sh killt). Holt das vollständige run.log VOR dem Aufräumen vom
+    tmpfs-RunDir, archiviert es persistent, schreibt status.json und löscht
+    dann erst das RunDir.
+    Rückgabe: True wenn finalisiert oder nichts zu tun; False wenn die NAS
+    nicht erreichbar war → der Watcher versucht es erneut (Log nicht verlieren)."""
     r = _nas_ssh(
         f"if [ -d {REMOTE_RUNDIR} ]; then printf 'DIR;'; "
         f"cat {REMOTE_RUNDIR}/exit_code 2>/dev/null; fi"
     )
-    if r is None or "DIR;" not in (r.stdout or ""):
-        return  # RunDir weg → Launcher hat bereits finalisiert
+    if r is None:
+        return False  # NAS nicht erreichbar → später erneut versuchen
+    if "DIR;" not in (r.stdout or ""):
+        return True  # RunDir weg → bereits finalisiert
     ec = "".join(c for c in (r.stdout or "").split("DIR;", 1)[1] if c.isdigit())
     status = "success" if ec == "0" else "failed"
+    # Vollständiges Log holen, BEVOR das tmpfs-RunDir gelöscht wird.
+    log_r = _nas_ssh(f"cat '{REMOTE_RUNDIR}/run.log' 2>/dev/null", timeout=30)
+    if log_r is None:
+        return False  # Log nicht erreicht → RunDir NICHT löschen, erneut versuchen
+    _archive_run_log(status, ec, log_r.stdout)
     try:
         with open(STATUS_FILE, "w") as f:
             json.dump({"status": status, "last_run": datetime.now().astimezone().isoformat()}, f)
     except OSError:
         pass
     _nas_ssh(f"rm -rf {REMOTE_RUNDIR}")
-    log.info("Backup auf NAS abgeschlossen (rc=%s) – status.json nachgezogen", ec or "?")
+    log.info("Backup auf NAS abgeschlossen (rc=%s) – Log archiviert, status.json nachgezogen", ec or "?")
     if _mqtt_client:
         _mqtt_client.publish_state()
+    return True
 
 
 def _nas_watch_loop():
     """Erkennt das Ende eines NAS-Laufs auch ohne lebenden Launcher (Container-
-    Neustart-Resilienz) und finalisiert dann den Status."""
+    Neustart-Resilienz) und finalisiert dann den Status. Schlägt das Finalize
+    fehl (NAS kurz nicht erreichbar), wird es bei den nächsten Ticks erneut
+    versucht, bis das RunDir geholt+aufgeräumt ist."""
     was_running = is_backup_running()
+    pending = False
     while True:
         time.sleep(20)
         try:
             running = is_backup_running()
-            if was_running and not running:
-                _finalize_from_nas()
+            if (was_running and not running) or pending:
+                pending = not _finalize_from_nas()
             was_running = running
         except Exception as e:
             log.warning("NAS-Watch Fehler: %s", e)

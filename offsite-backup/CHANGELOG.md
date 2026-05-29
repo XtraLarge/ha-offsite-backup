@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.48 - 2026-05-29
+
+### Hinzugefügt
+- **Vollständiges run.log wird nach Abschluss persistent auf hassio archiviert** (`/data/logs/runs/backup-<zeitstempel>.log`, mit Status-/rc-Header; rotierend, letzte 20 Läufe). Bisher lag das NAS-Log nur im tmpfs (`/dev/shm`) und ging beim Aufräumen verloren — fiel mitten im Lauf der Launcher aus (Container-Neustart), war ein fehlgeschlagener Lauf nicht mehr nachvollziehbar.
+
+### Geändert
+- `api.py`: `_finalize_from_nas` ist jetzt alleiniger Abschluss-Besitzer und holt das **vollständige run.log von der NAS, BEVOR** das tmpfs-RunDir gelöscht wird. Schlägt der Abruf fehl (NAS kurz nicht erreichbar), bleibt das RunDir stehen und der Watcher versucht es bei den nächsten Ticks erneut, statt das Log zu verwerfen.
+- `api.py`: Die Idle-Logansicht (`/api/log`, Dashboard) zeigt jetzt das vollständige archivierte Log des letzten Laufs (`read_finished_log`) statt des evtl. abgeschnittenen Live-Spiegels `backup.log`.
+- `backup.sh`: löscht das RunDir nicht mehr selbst — das übernimmt der Finalizer nach dem Log-Abruf. Dadurch wird das Log auch dann gesichert, wenn dieser Launcher mitten im Lauf stirbt.
+
 ## 1.2.47 - 2026-05-29
 
 ### Hinzugefügt
