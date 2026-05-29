@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.39 - 2026-05-29
+
+### Hinzugefügt
+- Dashboard: "Läuft seit"-Zeile mit Spinner und Fortschritt sichtbar wenn Backup aktiv
+- Dashboard: "Backup abbrechen"-Button (rot) erscheint während eines laufenden Backups, ersetzt den Start-Button
+- `POST /api/backup/abort` Endpoint: beendet den laufenden Backup-Prozess (SSH zur NAS)
+
 ## 1.2.38 - 2026-05-28
 
 ### Behoben
