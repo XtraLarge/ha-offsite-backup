@@ -24,7 +24,7 @@ run_root() { if is_root; then "$@"; else sudo "$@"; fi; }
 
 : > "$RSYNC_LOG"
 RSYNC_OPTS=(
-  -aHAX -W --numeric-ids --no-inc-recursive --delete-delay --max-alloc=4G
+  -aHAX -W --numeric-ids --delete-delay --max-alloc=4G
   --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
   --log-file="$RSYNC_LOG" --log-file-format="%t %o %i %n%L"
 )

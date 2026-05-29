@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.43 - 2026-05-29
+
+### Geändert
+- `backup_nas.sh`: `--no-inc-recursive` entfernt. Auf der NAS wurde verifiziert, dass BackupPC v4 keine FS-Hardlinks nutzt (`nlink=1` überall) — der einzige Vorteil des Flags (vollständige Hardlink-Erkennung) ist damit gegenstandslos. Inkrementelle Rekursion (Default) startet den Transfer sofort beim Scannen statt erst nach komplettem Dateilisten-Aufbau je Shard und braucht deutlich weniger RAM.
+
 ## 1.2.42 - 2026-05-29
 
 ### Hinzugefügt
