@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.42 - 2026-05-29
+
+### Hinzugefügt
+- `backup_nas.sh`: Paralleler Pool-Transfer. Der BackupPC-Pool wird in Shards (Verzeichnisse auf Tiefe 2: `cpool/<hex>`, `pc/<host>`) aufgeteilt und mit konfigurierbar `RSYNC_PARALLEL_JOBS` (Default 6) gleichzeitigen rsync-Streams übertragen. Jeder Stream nutzt eine eigene SSH-Verbindung (`SSH_CMD_NOCTL`, kein gemeinsamer ControlMaster) für eigenes Congestion-Window + parallele Verschlüsselung. Vorab ein Struktur-Pass (Tiefe ≤2) für Top-Level-Dateien, Verzeichnisgerüst und `--delete` verwaister Einträge.
+- `backup_nas.sh`: `kill_stale_backup_procs` beendet vor dem Snapshot-Cleanup verwaiste rsync/ssh-Prozesse früherer Läufe (z. B. nach abgebrochener SSH-Pipe), die den `pre_rsync`-Snapshot blockieren würden.
+
+### Geändert
+- `backup_nas.sh`: rsync nutzt jetzt `--whole-file` (`-W`). cpool-Dateien sind unveränderliche, inhaltsadressierte Chunks → der Delta-Algorithmus bringt nichts, kostet aber CPU/IO; `-W` überträgt geänderte Dateien direkt komplett.
+
+### Hinweis
+- Sharding ist verlustfrei: BackupPC v4 nutzt keine FS-Hardlinks (Pool inhaltsadressiert, pc/-Bäume via Referenzzählung), verifiziert auf der NAS (alle Stichproben `nlink=1`). Die parallele Offsite-Kopie ist strukturell identisch zur Einzel-rsync-Kopie und über die Recovery-Umgebung lesbar.
+
 ## 1.2.41 - 2026-05-29
 
 ### Behoben
