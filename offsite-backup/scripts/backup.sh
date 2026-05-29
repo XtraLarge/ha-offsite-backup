@@ -160,8 +160,11 @@ TAILER
 RC=$(echo "cat '${REMOTE_RUNDIR}/exit_code' 2>/dev/null" | ssh "${SSH_OPTS[@]}" "$NAS_TARGET" || true)
 RC="${RC//[^0-9]/}"
 
-# RunDir auf der NAS aufräumen (tmpfs; enthält keine Secrets mehr).
-echo "rm -rf '${REMOTE_RUNDIR}'" | ssh "${SSH_OPTS[@]}" "$NAS_TARGET" >/dev/null 2>&1 || true
+# RunDir NICHT hier löschen: das vollständige run.log wird nach Abschluss vom
+# Add-on (api.py _finalize_from_nas) von der NAS geholt und persistent nach
+# /data/logs/runs/ archiviert; erst danach räumt der Finalizer das tmpfs-RunDir
+# auf. So bleibt das Log auch dann erhalten, wenn dieser Launcher mitten im Lauf
+# durch einen Container-Neustart stirbt.
 
 if [[ "$RC" == "0" ]]; then
   echo "$(date '+%F %T'): ============================================"
