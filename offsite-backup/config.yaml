@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.2.42"
+version: "1.2.43"
 slug: offsite_backup
 description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
