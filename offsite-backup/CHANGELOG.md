@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.40 - 2026-05-29
+
+### Behoben
+- `loadStatus()`: null-Checks für alle neuen Element-IDs (`backup-running-row`, `start-btn`, `abort-btn`) — verhindert TypeError wenn Browser eine gecachte ältere HTML-Version hat
+- Fehler in `loadStatus()` werden jetzt mit Kontext ins Console-Log geschrieben
+
 ## 1.2.39 - 2026-05-29
 
 ### Hinzugefügt

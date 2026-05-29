@@ -569,35 +569,36 @@ async function loadStatus() {
       fetch(base + '/api/status').then(r => r.json()),
       fetch(base + '/api/options').then(r => r.json()),
     ]);
-    document.getElementById('last-run').textContent = fmtDate(s.last_run);
-    const badge = document.getElementById('status-badge');
+    const el = id => document.getElementById(id);
+    el('last-run').textContent = fmtDate(s.last_run);
+    const badge = el('status-badge');
 
-    const runningRow = document.getElementById('backup-running-row');
-    const startBtn   = document.getElementById('start-btn');
-    const abortBtn   = document.getElementById('abort-btn');
     if (s.backup_running) {
       badge.textContent = 'läuft';
       badge.className = 'badge badge-running';
-      runningRow.style.display = 'flex';
-      document.getElementById('backup-running-since').innerHTML =
-        '<span class="spinner"></span>' + fmtDate(s.backup_started_at);
-      document.getElementById('backup-progress-label').textContent = s.progress || '';
-      startBtn.style.display = 'none';
-      abortBtn.style.display = 'inline-block';
+      const row = el('backup-running-row');
+      if (row) row.style.display = 'flex';
+      const since = el('backup-running-since');
+      if (since) since.innerHTML = '<span class="spinner"></span>' + fmtDate(s.backup_started_at);
+      const prog = el('backup-progress-label');
+      if (prog) prog.textContent = s.progress || '';
+      const sb = el('start-btn'); if (sb) sb.style.display = 'none';
+      const ab = el('abort-btn'); if (ab) ab.style.display = 'inline-block';
     } else {
       badge.textContent = s.status || '—';
       badge.className = statusBadgeClass(s.status);
-      runningRow.style.display = 'none';
-      startBtn.style.display = 'inline-block';
-      abortBtn.style.display = 'none';
+      const row = el('backup-running-row');
+      if (row) row.style.display = 'none';
+      const sb = el('start-btn'); if (sb) sb.style.display = 'inline-block';
+      const ab = el('abort-btn'); if (ab) ab.style.display = 'none';
     }
 
-    document.getElementById('nas-host').textContent = o.zfs_storage_host || '?';
-    document.getElementById('schedule').textContent = o.backup_schedule || '?';
-    document.getElementById('next-run').textContent = fmtDate(s.next_run);
+    el('nas-host').textContent = o.zfs_storage_host || '?';
+    el('schedule').textContent = o.backup_schedule || '?';
+    el('next-run').textContent = fmtDate(s.next_run);
 
-    const rec = document.getElementById('recovery-status');
-    const openBtn = document.getElementById('recovery-open-btn');
+    const rec = el('recovery-status');
+    const openBtn = el('recovery-open-btn');
     if (s.recovery_running) {
       rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>läuft</span>';
       const port = o.backuppc_port || 8080;
@@ -607,7 +608,7 @@ async function loadStatus() {
       rec.innerHTML = '<span class="badge badge-unbekannt">inaktiv</span>';
       openBtn.style.display = 'none';
     }
-  } catch(e) { console.error(e); }
+  } catch(e) { console.error('loadStatus Fehler:', e); }
 }
 
 async function loadLog(showFeedback=false) {
