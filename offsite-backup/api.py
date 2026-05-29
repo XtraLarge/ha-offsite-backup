@@ -142,8 +142,11 @@ def is_backup_running():
     r = _nas_ssh(f"screen -ls 2>/dev/null | grep -q {SCREEN_NAME} && echo RUN || echo IDLE")
     if r is None:
         running = os.path.exists(BACKUP_LOCK)
+        log.info("DBG is_backup_running: ssh=None lock=%s -> %s", os.path.exists(BACKUP_LOCK), running)
     else:
         running = "RUN" in (r.stdout or "")
+        log.info("DBG is_backup_running: rc=%s out=%r err=%r -> %s",
+                 r.returncode, (r.stdout or "")[:120], (r.stderr or "")[:200], running)
     _screen_cache.update(ts=now, running=running)
     return running
 
