@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.44 - 2026-05-29
+
+### Geändert
+- **Architektur: Backup läuft jetzt in einer detached `screen`-Session AUF DER NAS** statt direkt an der SSH-Pipe vom HA-Add-on. Damit überleben Läufe Add-on-/Container-Neustarts und Netzwerkprobleme zwischen RPi und NAS — die SSH-Pipe spiegelt nur noch das Log, das Backup selbst ist davon entkoppelt. Das beseitigt die Hauptursache verwaister rsync-Prozesse (reparented auf init), die den `pre_rsync`-Snapshot blockierten.
+- **Offsite-Auth nur noch im RAM der NAS** (`nas_bootstrap.sh`): in der screen-Session wird ein `ssh-agent` gestartet, der private Offsite-Key per stdin (nie als Argument → nicht in `ps`) nach tmpfs (`/dev/shm`) übertragen, in den Agent geladen und die Datei sofort geschreddert. `SSH_AUTH_SOCK` und `OFFSITE_API_TOKEN` werden als Umgebungsvariablen an die rsync-/ssh-Kindprozesse vererbt. Kein Geheimnis landet je auf der NAS-Platte.
+
+### Hinzugefügt
+- `nas_bootstrap.sh`: Bootstrap, der in der screen-Session die RAM-only-Auth aufsetzt und `backup_nas.sh` ausführt; schreibt den Exit-Code nach `/dev/shm/offsite-backup/exit_code`.
+
+### Behoben
+- `api.py`: `is_backup_running()`/`abort_backup()` fragen jetzt die screen-Session auf der NAS als Quelle der Wahrheit ab (gecacht, SSH via Storage-Key), mit lokaler Lock-Datei als Rückfallebene wenn die NAS nicht erreichbar ist. Abbruch beendet die screen-Session und killt verwaiste rsync-Prozesse auf der NAS. `/api/log` holt das Log während eines Laufs direkt von der NAS.
+- `backup_nas.sh`: `kill_stale_backup_procs` brach unter `set -e`/`pipefail` ab, wenn ein bereits beendeter Prozess (Erfolgsfall nach SIGTERM) den `[[ -d /proc/$p ]]`-Test fehlschlagen ließ. Schleifen jetzt mit `|| true` und `return 0` abgesichert.
+
 ## 1.2.43 - 2026-05-29
 
 ### Geändert

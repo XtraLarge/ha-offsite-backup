@@ -16,6 +16,10 @@ OPTIONS_FILE = "/data/options.json"
 LOG_FILE = "/data/logs/backup.log"
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
+SECRETS_DIR = "/data/secrets"
+NAS_KEY = SECRETS_DIR + "/id_ed25519_storage"
+SCREEN_NAME = "offsite-backup"
+REMOTE_RUNDIR = "/dev/shm/offsite-backup"
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
@@ -75,6 +79,27 @@ def read_log(lines=100):
         return []
 
 
+_log_cache = {"ts": 0.0, "lines": None}
+
+
+def get_log_lines(lines=100):
+    """Während eines Laufs das run.log direkt von der NAS holen (damit das
+    Dashboard auch dann aktuell ist, wenn die Tail-Pipe des Launchers durch ein
+    Netzwerk-/Container-Problem abgerissen ist). Sonst die lokale Logdatei."""
+    if not is_backup_running():
+        return read_log(lines)
+    now = time.time()
+    if now - _log_cache["ts"] < 8 and _log_cache["lines"] is not None:
+        return _log_cache["lines"]
+    r = _nas_ssh(f"tail -n {int(lines)} '{REMOTE_RUNDIR}/run.log' 2>/dev/null", timeout=12)
+    if r is not None and r.returncode == 0 and r.stdout:
+        result = [ln + "\n" for ln in r.stdout.splitlines()]
+    else:
+        result = read_log(lines)
+    _log_cache.update(ts=now, lines=result)
+    return result
+
+
 def read_status():
     try:
         with open(STATUS_FILE) as f:
@@ -83,8 +108,44 @@ def read_status():
         return {"status": "unbekannt", "last_run": None}
 
 
+def _nas_ssh(remote_cmd, timeout=12):
+    """Führt einen Befehl auf der NAS aus (Storage-Key). Gibt CompletedProcess
+    oder None (nicht erreichbar/unkonfiguriert) zurück."""
+    opts = read_options()
+    host = opts.get("zfs_storage_host", "")
+    user = opts.get("zfs_storage_user", "root") or "root"
+    if not host or not os.path.exists(NAS_KEY):
+        return None
+    cmd = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={timeout}",
+        "-o", "ControlMaster=auto", "-o", "ControlPersist=30s",
+        "-o", "ControlPath=/tmp/ctl-nas-status-%C",
+        "-i", NAS_KEY, f"{user}@{host}", remote_cmd,
+    ]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 8)
+    except Exception:
+        return None
+
+
+_screen_cache = {"ts": 0.0, "running": False}
+
+
 def is_backup_running():
-    return os.path.exists(BACKUP_LOCK)
+    """Quelle der Wahrheit ist die screen-Session auf der NAS. Ergebnis wird
+    kurz gecacht, damit Status-Polls die NAS nicht überfluten. Ist die NAS nicht
+    erreichbar, dient die lokale Lock-Datei als Rückfallebene."""
+    now = time.time()
+    if now - _screen_cache["ts"] < 8:
+        return _screen_cache["running"]
+    r = _nas_ssh(f"screen -ls 2>/dev/null | grep -q {SCREEN_NAME} && echo RUN || echo IDLE")
+    if r is None:
+        running = os.path.exists(BACKUP_LOCK)
+    else:
+        running = "RUN" in (r.stdout or "")
+    _screen_cache.update(ts=now, running=running)
+    return running
 
 
 def _supervisor_request(method, path, body=None):
@@ -148,8 +209,7 @@ def get_progress():
     if not is_backup_running():
         return "Bereit"
     try:
-        with open(LOG_FILE) as f:
-            lines = f.readlines()
+        lines = get_log_lines(100)
         for line in reversed(lines):
             for pattern, label in _PROGRESS_PATTERNS:
                 if pattern in line:
@@ -175,6 +235,14 @@ def abort_backup():
     global _backup_proc
     if not is_backup_running():
         return False, "Kein Backup läuft"
+    # screen-Session auf der NAS beenden und verwaiste rsync/ssh-Prozesse killen,
+    # damit der ZFS-Snapshot-Mount freigegeben wird.
+    _nas_ssh(
+        f"screen -S {SCREEN_NAME} -X quit 2>/dev/null; "
+        r"pkill -f 'ctl-rsync-offline|\.zfs/snapshot/pre_rsync' 2>/dev/null; true",
+        timeout=20,
+    )
+    # Lokalen Launcher/Tail beenden (das eigentliche Backup lief auf der NAS).
     proc = _backup_proc
     if proc is not None and proc.poll() is None:
         proc.terminate()
@@ -182,11 +250,12 @@ def abort_backup():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+    _screen_cache["ts"] = 0.0
     try:
         os.unlink(BACKUP_LOCK)
     except OSError:
         pass
-    log.info("Backup manuell abgebrochen")
+    log.info("Backup manuell abgebrochen (NAS screen beendet)")
     return True, "Backup abgebrochen"
 
 
@@ -705,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
             safe = {k: v for k, v in opts.items() if k not in _hidden}
             self._json(safe)
         elif path == "/api/log":
-            self._json({"lines": read_log()})
+            self._json({"lines": get_log_lines()})
         elif path == "/api/backups":
             data, err = list_snapshots()
             if err:
