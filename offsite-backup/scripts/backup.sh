@@ -155,11 +155,13 @@ kill \$tpid 2>/dev/null || true
 TAILER
 
 # Exit-Code der NAS-Session abholen (von nas_bootstrap.sh geschrieben).
-RC=$(ssh "${SSH_OPTS[@]}" "$NAS_TARGET" "cat '${REMOTE_RUNDIR}/exit_code' 2>/dev/null" || true)
+# Hinweis: Der Storage-Key ist auf `command="bash -s"` festgenagelt, daher
+# müssen Befehle über stdin kommen (Argument-Befehle würden ignoriert).
+RC=$(echo "cat '${REMOTE_RUNDIR}/exit_code' 2>/dev/null" | ssh "${SSH_OPTS[@]}" "$NAS_TARGET" || true)
 RC="${RC//[^0-9]/}"
 
 # RunDir auf der NAS aufräumen (tmpfs; enthält keine Secrets mehr).
-ssh "${SSH_OPTS[@]}" "$NAS_TARGET" "rm -rf '${REMOTE_RUNDIR}'" >/dev/null 2>&1 || true
+echo "rm -rf '${REMOTE_RUNDIR}'" | ssh "${SSH_OPTS[@]}" "$NAS_TARGET" >/dev/null 2>&1 || true
 
 if [[ "$RC" == "0" ]]; then
   echo "$(date '+%F %T'): ============================================"

@@ -109,8 +109,10 @@ def read_status():
 
 
 def _nas_ssh(remote_cmd, timeout=12):
-    """Führt einen Befehl auf der NAS aus (Storage-Key). Gibt CompletedProcess
-    oder None (nicht erreichbar/unkonfiguriert) zurück."""
+    """Führt einen Befehl auf der NAS aus. Der Storage-Key ist in
+    authorized_keys auf `command="bash -s"` festgenagelt (forced command) –
+    Argument-Befehle würden ignoriert. Daher wird der Befehl über STDIN an das
+    erzwungene `bash -s` gepipt. Gibt CompletedProcess oder None zurück."""
     opts = read_options()
     host = opts.get("zfs_storage_host", "")
     user = opts.get("zfs_storage_user", "root") or "root"
@@ -119,12 +121,11 @@ def _nas_ssh(remote_cmd, timeout=12):
     cmd = [
         "ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
         "-o", f"ConnectTimeout={timeout}",
-        "-o", "ControlMaster=auto", "-o", "ControlPersist=30s",
-        "-o", "ControlPath=/tmp/ctl-nas-status-%C",
-        "-i", NAS_KEY, f"{user}@{host}", remote_cmd,
+        "-i", NAS_KEY, f"{user}@{host}",
     ]
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 8)
+        return subprocess.run(cmd, input=remote_cmd, capture_output=True,
+                              text=True, timeout=timeout + 8)
     except Exception:
         return None
 
@@ -142,11 +143,8 @@ def is_backup_running():
     r = _nas_ssh(f"screen -ls 2>/dev/null | grep -q {SCREEN_NAME} && echo RUN || echo IDLE")
     if r is None:
         running = os.path.exists(BACKUP_LOCK)
-        log.info("DBG is_backup_running: ssh=None lock=%s -> %s", os.path.exists(BACKUP_LOCK), running)
     else:
         running = "RUN" in (r.stdout or "")
-        log.info("DBG is_backup_running: rc=%s out=%r err=%r -> %s",
-                 r.returncode, (r.stdout or "")[:120], (r.stderr or "")[:200], running)
     _screen_cache.update(ts=now, running=running)
     return running
 

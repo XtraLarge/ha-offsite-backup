@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.46 - 2026-05-29
+
+### Behoben
+- Status/Abbruch/Aufräumen funktionierten nach dem Umbau auf 1.2.44 nicht: Der Storage-Key ist in `authorized_keys` der NAS auf `command="bash -s"` festgenagelt (forced command), wodurch Argument-Befehle (`ssh nas "screen -ls …"`) ignoriert werden und das erzwungene `bash -s` nur leeres stdin liest (rc=0, keine Ausgabe). `is_backup_running()` zeigte dadurch dauerhaft „kein Backup". Alle NAS-Befehle (`_nas_ssh`, Exit-Code-Abruf und Aufräumen in `backup.sh`) werden jetzt über stdin an `bash -s` gepipt. Der Backup-Lauf selbst war nie betroffen (Launcher/Log-Tail nutzten bereits `bash -s` per stdin).
+
 ## 1.2.44 - 2026-05-29
 
 ### Geändert
