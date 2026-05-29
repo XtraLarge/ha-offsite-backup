@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.41 - 2026-05-29
+
+### Behoben
+- Dashboard war komplett leer: `abortBackup()` enthielt im `confirm()`-Text echte Zeilenumbrüche (`\n\n` im Python-Triple-Quote-String wurde zu echten Newlines), was den JS-String über mehrere Zeilen brach → Syntaxfehler → gesamter `<script>`-Block wurde nicht ausgeführt, kein `loadStatus()`/`loadLog()`. Newlines jetzt als `\\n` escaped, sodass im ausgelieferten JS echte `\n`-Escape-Sequenzen stehen.
+
 ## 1.2.40 - 2026-05-29
 
 ### Behoben
