@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.47 - 2026-05-29
+
+### Hinzugefügt
+- `api.py`: NAS-Watcher-Thread (`_nas_watch_loop`/`_finalize_from_nas`). Endet die screen-Session auf der NAS, während der lokale Launcher nicht mehr läuft (z. B. Container-Neustart mitten im Lauf), liest der Watcher den Exit-Code aus dem RunDir, schreibt `status.json` nach und räumt das tmpfs-RunDir auf. Schließt die letzte Lücke der Neustart-Resilienz: ein Lauf wird auch dann korrekt abgeschlossen, wenn das Add-on während des Backups neu startet.
+
 ## 1.2.46 - 2026-05-29
 
 ### Behoben

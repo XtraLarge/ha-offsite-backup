@@ -278,6 +278,46 @@ def _run_backup():
         _mqtt_client.publish_state()
 
 
+def _finalize_from_nas():
+    """Wird aufgerufen, wenn die NAS-screen-Session endet, der lokale Launcher
+    (backup.sh) aber nicht mehr läuft – z. B. weil der Container während des
+    Laufs neugestartet wurde. Liest den Exit-Code aus dem RunDir, schreibt
+    status.json und räumt das tmpfs-RunDir auf. Hat der Launcher bereits
+    aufgeräumt (RunDir weg), passiert nichts."""
+    r = _nas_ssh(
+        f"if [ -d {REMOTE_RUNDIR} ]; then printf 'DIR;'; "
+        f"cat {REMOTE_RUNDIR}/exit_code 2>/dev/null; fi"
+    )
+    if r is None or "DIR;" not in (r.stdout or ""):
+        return  # RunDir weg → Launcher hat bereits finalisiert
+    ec = "".join(c for c in (r.stdout or "").split("DIR;", 1)[1] if c.isdigit())
+    status = "success" if ec == "0" else "failed"
+    try:
+        with open(STATUS_FILE, "w") as f:
+            json.dump({"status": status, "last_run": datetime.now().astimezone().isoformat()}, f)
+    except OSError:
+        pass
+    _nas_ssh(f"rm -rf {REMOTE_RUNDIR}")
+    log.info("Backup auf NAS abgeschlossen (rc=%s) – status.json nachgezogen", ec or "?")
+    if _mqtt_client:
+        _mqtt_client.publish_state()
+
+
+def _nas_watch_loop():
+    """Erkennt das Ende eines NAS-Laufs auch ohne lebenden Launcher (Container-
+    Neustart-Resilienz) und finalisiert dann den Status."""
+    was_running = is_backup_running()
+    while True:
+        time.sleep(20)
+        try:
+            running = is_backup_running()
+            if was_running and not running:
+                _finalize_from_nas()
+            was_running = running
+        except Exception as e:
+            log.warning("NAS-Watch Fehler: %s", e)
+
+
 def trigger_recovery(action, snapshot_name=""):
     try:
         if action == "start":
@@ -832,6 +872,7 @@ if __name__ == "__main__":
     if not os.environ.get("SUPERVISOR_TOKEN"):
         log.warning("SUPERVISOR_TOKEN nicht verfügbar — BackupPC-Steuerung deaktiviert")
     start_mqtt()
+    threading.Thread(target=_nas_watch_loop, daemon=True).start()
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
     server.serve_forever()
