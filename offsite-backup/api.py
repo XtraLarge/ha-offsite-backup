@@ -159,6 +159,10 @@ def get_progress():
     return "Bereit"
 
 
+_backup_proc = None
+_backup_started_at = None
+
+
 def trigger_backup():
     if is_backup_running():
         return False, "Backup läuft bereits"
@@ -167,11 +171,35 @@ def trigger_backup():
     return True, "Backup gestartet"
 
 
-def _run_backup():
-    open(BACKUP_LOCK, "w").close()
+def abort_backup():
+    global _backup_proc
+    if not is_backup_running():
+        return False, "Kein Backup läuft"
+    proc = _backup_proc
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
     try:
-        subprocess.run(["/scripts/backup.sh"], capture_output=False)
+        os.unlink(BACKUP_LOCK)
+    except OSError:
+        pass
+    log.info("Backup manuell abgebrochen")
+    return True, "Backup abgebrochen"
+
+
+def _run_backup():
+    global _backup_proc, _backup_started_at
+    open(BACKUP_LOCK, "w").close()
+    _backup_started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        _backup_proc = subprocess.Popen(["/scripts/backup.sh"])
+        _backup_proc.wait()
     finally:
+        _backup_proc = None
+        _backup_started_at = None
         try:
             os.unlink(BACKUP_LOCK)
         except OSError:
@@ -473,12 +501,17 @@ DASHBOARD_HTML = """\
     <div class="card-header"><h2>Status</h2></div>
     <div class="row"><span class="label">Letzter Lauf</span><span id="last-run">—</span></div>
     <div class="row"><span class="label">Ergebnis</span><span id="status-badge" class="badge">—</span></div>
+    <div class="row" id="backup-running-row" style="display:none">
+      <span class="label">L&auml;uft seit</span><span id="backup-running-since">—</span>
+      <span style="margin-left:.5rem;color:#888;font-size:.85rem" id="backup-progress-label"></span>
+    </div>
     <div class="row"><span class="label">ZFS-Storage</span><code id="nas-host">—</code></div>
     <div class="row"><span class="label">Zeitplan</span><code id="schedule">—</code></div>
-    <div class="row"><span class="label">Nächster Backup</span><span id="next-run">—</span></div>
+    <div class="row"><span class="label">N&auml;chster Backup</span><span id="next-run">—</span></div>
     <div class="row"><span class="label">BackupPC</span><span id="recovery-status">—</span></div>
     <div class="actions">
-      <button class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
+      <button id="start-btn" class="btn-primary" onclick="triggerBackup()">&#9654; Backup jetzt starten</button>
+      <button id="abort-btn" class="btn-danger" onclick="abortBackup()" style="display:none">&#9632; Backup abbrechen</button>
     </div>
   </div>
 
@@ -538,8 +571,27 @@ async function loadStatus() {
     ]);
     document.getElementById('last-run').textContent = fmtDate(s.last_run);
     const badge = document.getElementById('status-badge');
-    badge.textContent = s.status || '—';
-    badge.className = statusBadgeClass(s.status);
+
+    const runningRow = document.getElementById('backup-running-row');
+    const startBtn   = document.getElementById('start-btn');
+    const abortBtn   = document.getElementById('abort-btn');
+    if (s.backup_running) {
+      badge.textContent = 'läuft';
+      badge.className = 'badge badge-running';
+      runningRow.style.display = 'flex';
+      document.getElementById('backup-running-since').innerHTML =
+        '<span class="spinner"></span>' + fmtDate(s.backup_started_at);
+      document.getElementById('backup-progress-label').textContent = s.progress || '';
+      startBtn.style.display = 'none';
+      abortBtn.style.display = 'inline-block';
+    } else {
+      badge.textContent = s.status || '—';
+      badge.className = statusBadgeClass(s.status);
+      runningRow.style.display = 'none';
+      startBtn.style.display = 'inline-block';
+      abortBtn.style.display = 'none';
+    }
+
     document.getElementById('nas-host').textContent = o.zfs_storage_host || '?';
     document.getElementById('schedule').textContent = o.backup_schedule || '?';
     document.getElementById('next-run').textContent = fmtDate(s.next_run);
@@ -576,6 +628,13 @@ async function triggerBackup() {
   setTimeout(loadStatus, 1000);
 }
 
+async function abortBackup() {
+  if (!confirm('Laufendes Backup abbrechen?\n\nDer SSH-Prozess zur NAS wird beendet.')) return;
+  const d = await fetch(base + '/api/backup/abort', {method:'POST'}).then(r => r.json());
+  showMsg(d.message, 5000);
+  setTimeout(loadStatus, 1500);
+}
+
 async function triggerRecovery(action) {
   const label = action === 'start' ? 'starten' : 'beenden';
   if (!confirm(`BackupPC Recovery Umgebung ${label}?`)) return;
@@ -605,7 +664,8 @@ setInterval(() => loadLog(false), 30000);
 
 _API_ROUTES = (
     "/api/recovery/start", "/api/recovery/stop",
-    "/api/status", "/api/options", "/api/log", "/api/backups", "/api/backup",
+    "/api/status", "/api/options", "/api/log", "/api/backups",
+    "/api/backup/abort", "/api/backup",
 )
 
 
@@ -631,6 +691,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             s = read_status()
             s["backup_running"] = is_backup_running()
+            s["backup_started_at"] = _backup_started_at
             s["recovery_running"] = is_recovery_running()
             s["next_run"] = get_next_run()
             s["progress"] = get_progress()
@@ -661,6 +722,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/backup":
             ok_flag, msg = trigger_backup()
+            self._json({"ok": ok_flag, "message": msg})
+        elif path == "/api/backup/abort":
+            ok_flag, msg = abort_backup()
             self._json({"ok": ok_flag, "message": msg})
         elif path == "/api/recovery/start":
             ok_flag, msg = trigger_recovery("start", body.get("snapshot_name", ""))
