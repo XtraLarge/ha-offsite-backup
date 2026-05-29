@@ -73,17 +73,14 @@ check_offsite_token() {
   esac
 }
 
-# Direkt im Script-Kontext starten (RUNNING_IN_SCREEN=1 gesetzt vom HA-Add-on)
-if [[ -z "${STY:-}" && -z "${RUNNING_IN_SCREEN:-}" ]]; then
-  ensure_packages
-  if [[ -z "${OFFSITE_API_TOKEN:-}" ]]; then
-    echo "FEHLER: OFFSITE_API_TOKEN nicht gesetzt"; exit 1
-  fi
-  check_offsite_token "$OFFSITE_API_TOKEN" "$OFFSITE_BOX_ID"
-  RUNNING_IN_SCREEN=1 OFFSITE_API_TOKEN="$OFFSITE_API_TOKEN" exec bash "$0" "$@"
-fi
-
+# Auth (ssh-agent + OFFSITE_API_TOKEN) wird vom nas_bootstrap.sh in der
+# screen-Session bereitgestellt und an diesen Prozess vererbt. Hier nur prüfen.
 ensure_packages
+
+if [[ -z "${OFFSITE_API_TOKEN:-}" ]]; then
+  echo "FEHLER: OFFSITE_API_TOKEN nicht gesetzt"; exit 1
+fi
+check_offsite_token "$OFFSITE_API_TOKEN" "$OFFSITE_BOX_ID"
 
 OFFSITE_TOKEN_LOCAL="${OFFSITE_API_TOKEN:-}"
 unset OFFSITE_API_TOKEN
@@ -217,13 +214,21 @@ kill_stale_backup_procs() {
 
   local uniq; uniq="$(printf '%s\n' "${targets[@]}" | sort -un)"
   echo "$(date '+%F %T'): Verwaiste Backup-Prozesse gefunden – beende: $(echo "$uniq" | tr '\n' ' ')"
-  echo "$uniq" | while IFS= read -r p; do [[ -n "$p" ]] && run_root kill -TERM "$p" 2>/dev/null || true; done
+  # Hinweis: Schleifenkörper bzw. Pipeline müssen unter set -e/pipefail mit 0
+  # enden – sonst bricht ein bereits beendeter Prozess (Erfolgsfall!) das Skript ab.
+  echo "$uniq" | while IFS= read -r p; do
+    [[ -n "$p" ]] && run_root kill -TERM "$p" 2>/dev/null || true
+  done || true
   sleep 5
   echo "$uniq" | while IFS= read -r p; do
-    [[ -n "$p" && -d "/proc/$p" ]] && { echo "$(date '+%F %T'): PID $p lebt noch – SIGKILL"; run_root kill -KILL "$p" 2>/dev/null || true; }
-  done
+    if [[ -n "$p" && -d "/proc/$p" ]]; then
+      echo "$(date '+%F %T'): PID $p lebt noch – SIGKILL"
+      run_root kill -KILL "$p" 2>/dev/null || true
+    fi
+  done || true
   sleep 2
   run_root rm -f /tmp/ctl-rsync-offline-* 2>/dev/null || true
+  return 0
 }
 
 kill_stale_backup_procs
