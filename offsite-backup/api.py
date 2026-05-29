@@ -630,7 +630,7 @@ async function triggerBackup() {
 }
 
 async function abortBackup() {
-  if (!confirm('Laufendes Backup abbrechen?\n\nDer SSH-Prozess zur NAS wird beendet.')) return;
+  if (!confirm('Laufendes Backup abbrechen?\\n\\nDer SSH-Prozess zur NAS wird beendet.')) return;
   const d = await fetch(base + '/api/backup/abort', {method:'POST'}).then(r => r.json());
   showMsg(d.message, 5000);
   setTimeout(loadStatus, 1500);
