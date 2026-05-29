@@ -24,16 +24,24 @@ run_root() { if is_root; then "$@"; else sudo "$@"; fi; }
 
 : > "$RSYNC_LOG"
 RSYNC_OPTS=(
-  -aHAX --numeric-ids --no-inc-recursive --delete-delay --max-alloc=4G
+  -aHAX -W --numeric-ids --no-inc-recursive --delete-delay --max-alloc=4G
   --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
   --log-file="$RSYNC_LOG" --log-file-format="%t %o %i %n%L"
 )
+RSYNC_PARALLEL_JOBS="${RSYNC_PARALLEL_JOBS:-6}"
 
 SSH_CTL="/tmp/ctl-rsync-offline-%C"
 SSH_CMD="ssh -p $OFFSITE_PORT -T -o Compression=no -c aes128-gcm@openssh.com \
   -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
   -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
   -o ControlMaster=auto -o ControlPersist=15m -o ControlPath=$SSH_CTL"
+
+# Eigene SSH-Verbindung pro Parallel-Shard (kein gemeinsamer Master): jede
+# Verbindung bekommt ihr eigenes TCP-/Congestion-Window und eine eigene CPU für
+# die Verschlüsselung – das erhöht den aggregierten Durchsatz bei vielen Streams.
+SSH_CMD_NOCTL="ssh -p $OFFSITE_PORT -T -o Compression=no -c aes128-gcm@openssh.com \
+  -o ConnectTimeout=$SSH_CONNECT_TIMEOUT \
+  -o ServerAliveInterval=60 -o ServerAliveCountMax=10"
 
 reset_ssh_master() {
   ssh -p "$OFFSITE_PORT" -o ControlPath="$SSH_CTL" -O exit "$OFFSITE_USER@$OFFSITE_HOST" >/dev/null 2>&1 || true
@@ -95,7 +103,7 @@ run_rsync() {
     (while true; do echo "$(date '+%F %T'): läuft: $src"; sleep "$STATUS_INTERVAL"; done) &
     local status_pid=$!
     set +e
-    run_root rsync "${RSYNC_OPTS[@]}" -e "$SSH_CMD" "$src" "$dst"
+    run_root rsync "${RSYNC_OPTS[@]}" -e "${RSYNC_SSH:-$SSH_CMD}" "$src" "$dst"
     local rc=$?
     set -e
     kill "$status_pid" >/dev/null 2>&1 || true
@@ -117,6 +125,63 @@ run_rsync() {
   done
 }
 
+# Großen Baum (BackupPC-Pool) parallel übertragen. Aufteilung in Shards =
+# Verzeichnisse auf Tiefe 2 (z. B. pc/<host>, cpool/<hex>). Bei BackupPC v4 ist
+# der Pool inhaltsadressiert (jede Datei liegt an genau einem Pfad, kein
+# Hardlink zwischen Pool-Dateien) und pc/-Bäume referenzieren den Pool über
+# Digests in attrib-Dateien statt über FS-Hardlinks – daher ist Sharding
+# verlustfrei: jede Datei landet in genau einem Shard, --delete je Shard ist
+# korrekt, und es brechen keine für die Wiederherstellung nötigen Hardlinks.
+# $1 = lokaler Quell-Root (mit/ohne /), $2 = entfernter Zielpfad (ohne user@host)
+run_rsync_parallel() {
+  local src_root="${1%/}" dst_path="${2%/}"
+  local jobs="$RSYNC_PARALLEL_JOBS"
+  local remote="${OFFSITE_USER}@${OFFSITE_HOST}"
+
+  echo "$(date '+%F %T'): Parallel-Sync (${jobs} Streams): $src_root → ${remote}:${dst_path}/"
+
+  # Struktur-Pass: alles bis Tiefe 2 (Top-Level-Dateien + leere Shard-Dirs),
+  # Inhalte ab Tiefe 3 ausgeschlossen (übernehmen die Shards). --delete entfernt
+  # hier verwaiste Top-Level-Einträge; ausgeschlossene (= Shard-)Inhalte sind
+  # vor Löschung geschützt.
+  echo "$(date '+%F %T'): Struktur-Pass (Tiefe ≤2) …"
+  local skel_opts=(
+    -aHAX -W --numeric-ids --max-alloc=4G
+    --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
+    --delete -f '- /*/*/**'
+  )
+  run_root rsync "${skel_opts[@]}" -e "$SSH_CMD" "$src_root/" "${remote}:${dst_path}/"
+
+  local shards=()
+  mapfile -t shards < <(run_root find "$src_root" -mindepth 2 -maxdepth 2 -type d -printf '%P\n' 2>/dev/null | sort)
+  local total="${#shards[@]}"
+  echo "$(date '+%F %T'): $total Shards zu übertragen"
+  if [[ "$total" -eq 0 ]]; then
+    echo "$(date '+%F %T'): Keine Tiefe-2-Verzeichnisse – Struktur-Pass deckt alles ab."
+    return 0
+  fi
+
+  local rc_dir; rc_dir="$(mktemp -d)"
+  local shard
+  for shard in "${shards[@]}"; do
+    while (( $(jobs -rp | wc -l) >= jobs )); do wait -n 2>/dev/null || wait; done
+    (
+      if ! RSYNC_SSH="$SSH_CMD_NOCTL" run_rsync "$src_root/$shard/" "${remote}:${dst_path}/$shard/"; then
+        : > "$rc_dir/fail.$BASHPID"
+      fi
+    ) &
+  done
+  wait
+
+  local fails; fails="$(find "$rc_dir" -type f -name 'fail.*' 2>/dev/null | wc -l)"
+  rm -rf "$rc_dir"
+  if (( fails > 0 )); then
+    echo "$(date '+%F %T'): FEHLER: $fails von $total Shards fehlgeschlagen"
+    return 1
+  fi
+  echo "$(date '+%F %T'): Alle $total Shards erfolgreich übertragen"
+}
+
 zfs_destroy_retry() {
   local snap="$1" i
   for i in 1 2 3; do
@@ -130,6 +195,38 @@ zfs_destroy_retry() {
   echo "$(date '+%F %T'): Snapshot noch busy – deferred destroy: $snap"
   run_root zfs destroy -d "$snap"
 }
+
+# Verwaiste rsync/ssh-Prozesse früherer Läufe beenden. Wenn die SSH-Pipe vom
+# HA-Add-on abbricht, läuft der rsync hier weiter (reparented auf init) und hält
+# den pre_rsync-Snapshot-Mount offen → jeder neue Lauf scheitert am "dataset is
+# busy". Wir killen sie vor dem Snapshot-Cleanup. Zu diesem Zeitpunkt existiert
+# noch kein rsync des aktuellen Laufs, daher ist jeder Treffer ein Altlauf.
+kill_stale_backup_procs() {
+  local self=$$ parent
+  parent="$(awk '{print $4}' "/proc/$self/stat" 2>/dev/null || echo 0)"
+  local targets=() pid ppid
+  for pid in $(pgrep -f 'ctl-rsync-offline|\.zfs/snapshot/pre_rsync' 2>/dev/null || true); do
+    [[ "$pid" == "$self" || "$pid" == "$parent" ]] && continue
+    targets+=("$pid")
+    ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || echo 0)"
+    if [[ "$ppid" -gt 1 && "$ppid" != "$self" && "$ppid" != "$parent" ]]; then
+      targets+=("$ppid")
+    fi
+  done
+  [[ "${#targets[@]}" -eq 0 ]] && return 0
+
+  local uniq; uniq="$(printf '%s\n' "${targets[@]}" | sort -un)"
+  echo "$(date '+%F %T'): Verwaiste Backup-Prozesse gefunden – beende: $(echo "$uniq" | tr '\n' ' ')"
+  echo "$uniq" | while IFS= read -r p; do [[ -n "$p" ]] && run_root kill -TERM "$p" 2>/dev/null || true; done
+  sleep 5
+  echo "$uniq" | while IFS= read -r p; do
+    [[ -n "$p" && -d "/proc/$p" ]] && { echo "$(date '+%F %T'): PID $p lebt noch – SIGKILL"; run_root kill -KILL "$p" 2>/dev/null || true; }
+  done
+  sleep 2
+  run_root rm -f /tmp/ctl-rsync-offline-* 2>/dev/null || true
+}
+
+kill_stale_backup_procs
 
 # Vorhandene pre_rsync-Snapshots im Log anzeigen (Diagnose)
 existing="$(run_root zfs list -H -t snapshot -o name,defer_destroy -s creation -r "$DATASET" \
@@ -152,7 +249,7 @@ MP="$(zfs get -H -o value mountpoint "$DATASET")"
 echo "$(date '+%F %T'): Snapshot erstellen: ${DATASET}@${SNAP}"
 run_root zfs snapshot "${DATASET}@${SNAP}"
 
-run_rsync "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/BackupPC/"
+run_rsync_parallel "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_PATH}/ZPool/BackupPC"
 echo "$(date '+%F %T'): Snapshot löschen: ${DATASET}@${SNAP}"
 zfs_destroy_retry "${DATASET}@${SNAP}"
 
