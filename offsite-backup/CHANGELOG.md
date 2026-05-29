@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.49 - 2026-05-29
+
+### Behoben
+- **Erfolgreiche Backups wurden fälschlich als „failed" markiert.** Ursache (jetzt dank des persistenten Log-Archivs aus 1.2.48 sichtbar): `backup_nas.sh:293` rief `unset OFFSITE_TOKEN_LOCAL` auf, obwohl die Variable in Zeile 87 `readonly` ist — das schlägt fehl und beendet das Skript unter `set -euo pipefail` mit rc=1, obwohl alle Schritte (159 Shards, ZFS-Snapshot-Cleanup, Docker-Dirs, Hetzner-Offsite-Snapshot) erfolgreich waren. Die redundante `unset`-Zeile entfernt (der Prozess endet ohnehin unmittelbar danach, die Variable verschwindet mit ihm).
+
 ## 1.2.48 - 2026-05-29
 
 ### Hinzugefügt
