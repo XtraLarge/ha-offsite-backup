@@ -290,5 +290,4 @@ create_storagebox_snapshot() {
 }
 create_storagebox_snapshot
 reset_ssh_master
-unset OFFSITE_TOKEN_LOCAL
 echo "$(date '+%F %T'): Fertig."
