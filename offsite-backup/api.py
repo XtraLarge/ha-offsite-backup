@@ -429,17 +429,23 @@ def trigger_recovery(action, snapshot_name=""):
     try:
         if action == "start":
             opts = read_options()
+            # Der Supervisor /options-Endpoint ersetzt die Optionen vollständig
+            # und validiert gegen das komplette Schema – alle Pflichtfelder müssen
+            # mit. offsite_path + backup_sources gehören seit 2.1.0 dazu; sie an
+            # die Recovery durchzureichen spiegelt zugleich das Backup-Mapping 1:1.
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/options", {
                 "options": {
                     "offsite_user":    opts.get("offsite_user", ""),
                     "offsite_host":    opts.get("offsite_host", ""),
                     "offsite_port":    int(opts.get("offsite_port", 23)),
+                    "offsite_path":    opts.get("offsite_path", "/home"),
                     "snapshot_name":   snapshot_name,
                     "mqtt_host":       opts.get("mqtt_host", ""),
                     "mqtt_port":       int(opts.get("mqtt_port", 1883)),
                     "mqtt_user":       opts.get("mqtt_user", ""),
                     "mqtt_password":   opts.get("mqtt_password", ""),
                     "ssh_key_offsite": opts.get("ssh_key_offsite", ""),
+                    "backup_sources":  opts.get("backup_sources", []),
                 }
             })
             _supervisor_request("POST", f"/addons/{RECOVERY_ADDON_SLUG}/start")
