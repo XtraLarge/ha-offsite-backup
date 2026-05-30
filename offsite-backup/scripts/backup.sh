@@ -82,6 +82,7 @@ echo "$(date '+%F %T'): Starte Backup in screen-Session '$SCREEN_NAME' auf $NAS_
 # --- Launcher auf der NAS: legt /dev/shm-RunDir an, dekodiert Skripte/Secrets,
 #     stellt screen sicher und startet die detached Session. ---
 # Achtung: lokale ${VARS} werden hier expandiert, remote-$ als \$ geschützt.
+# shellcheck disable=SC2087  # Client-seitige Expansion ist hier gewollt.
 launch_out=$(ssh "${SSH_OPTS[@]}" "$NAS_TARGET" "bash -s" <<LAUNCHER || true
 set -euo pipefail
 umask 077
@@ -156,6 +157,7 @@ esac
 # Log der laufenden Session in das lokale LOG_FILE spiegeln, solange die Session
 # lebt. Endet die SSH-Verbindung (Netzwerk/Container-Neustart), läuft das Backup
 # auf der NAS einfach weiter; dieses Skript endet dann nur das Mitschreiben.
+# shellcheck disable=SC2087  # Client-seitige Expansion ist hier gewollt.
 ssh "${SSH_OPTS[@]}" "$NAS_TARGET" "bash -s" <<TAILER || true
 tail -n +1 -F '${REMOTE_RUNDIR}/run.log' 2>/dev/null &
 tpid=\$!

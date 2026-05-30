@@ -60,11 +60,11 @@ ensure_packages() {
 
 check_offsite_token() {
   local token="$1" box_id="$2"
-  local out http body
+  local out http
   out="$(curl -sS -H "Authorization: Bearer $token" \
         "https://api.hetzner.com/v1/storage_boxes/${box_id}" \
         -w $'\n%{http_code}' || true)"
-  http="${out##*$'\n'}"; body="${out%$'\n'*}"
+  http="${out##*$'\n'}"
   case "$http" in
     200) echo "Offsite Token-Check: OK"; return 0 ;;
     401|403) echo "FEHLER: Offsite API Token ungültig (HTTP $http)"; return 1 ;;
@@ -322,7 +322,7 @@ for ((i=0; i<NUM_SRC; i++)); do
 done
 
 create_storagebox_snapshot() {
-  local desc="Snap_$(date +%F)"
+  local desc; desc="Snap_$(date +%F)"
   echo "$(date '+%F %T'): Erstelle Offsite Snapshot: $desc"
   local resp
   resp="$(curl -sS -X POST \

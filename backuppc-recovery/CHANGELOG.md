@@ -1,3 +1,7 @@
+## 2.1.2
+
+- `squash: false` aus `build.yaml` entfernt — vom Supervisor (Docker Buildkit) nicht mehr unterstützt (Konsistenz mit dem Offsite-Add-on, das deswegen im CI-Linter fehlschlug).
+
 ## 2.1.1
 
 - `backup_sources`-Schema umsortiert: `dest` zuerst. Die HA-Options-UI nimmt das erste Feld als Zeilen-Titel — vorher `dataset` (nur bei der Snapshot-Quelle gesetzt), wodurch die vier `path`-basierten Einträge ohne Titel erschienen. `dest` ist gesetzt in jedem Eintrag → jede Zeile zeigt nun ihren Pfad. Rein kosmetisch, identisch zum Offsite-Add-on gehalten.

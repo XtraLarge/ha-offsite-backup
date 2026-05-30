@@ -2,7 +2,6 @@ build_from:
   amd64: adferrand/backuppc:4.4.0-12
   aarch64: adferrand/backuppc:4.4.0-12
 
-squash: false
 labels:
   org.opencontainers.image.title: "BackupPC Recovery"
   org.opencontainers.image.description: "BackupPC4 Recovery via Offsite Storage Box"
