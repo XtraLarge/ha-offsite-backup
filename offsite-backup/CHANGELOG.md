@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4 - 2026-05-30
+
+### Behoben
+
+- **„BackupPC starten" im Dashboard schlug fehl** mit `HTTP Error 400: Bad Request` (seit 2.1.0). Der Supervisor-`/options`-Endpoint ersetzt die Optionen vollständig und validiert gegen das ganze Schema — die Recovery verlangt seit 2.1.0 `offsite_path` und `backup_sources` als Pflichtfelder, der Start-Payload in `trigger_recovery()` reichte beide aber nicht mit (`Missing option 'offsite_path' / 'backup_sources'`). Beide werden jetzt aus den Offsite-Optionen durchgereicht — fixt den Start und spiegelt zugleich das Backup-Mapping 1:1 an die Recovery.
+
 ## 1.3.3 - 2026-05-30
 
 ### Behoben
