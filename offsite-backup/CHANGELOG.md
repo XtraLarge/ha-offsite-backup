@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2 - 2026-05-30
+
+### Geändert
+
+- `backup_sources`-Schema umsortiert: `dest` steht jetzt an erster Stelle. Die HA-Options-UI nutzt das erste Feld als Zeilen-Titel — bisher war das `dataset`, das nur die ZFS-Snapshot-Quelle füllt, sodass die vier `path`-basierten Einträge ohne Titel angezeigt wurden. `dest` ist Pflichtfeld und in jedem Eintrag gesetzt → jede Zeile zeigt nun ihren Ziel-Pfad. Rein kosmetisch, keine Verhaltensänderung (Skripte lesen Felder per Name).
+
 ## 1.3.1 - 2026-05-30
 
 ### Geändert
