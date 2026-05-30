@@ -60,17 +60,39 @@ OFFSITE_USER=$(jq -r '.offsite_user' "$CONFIG")
 OFFSITE_HOST=$(jq -r '.offsite_host' "$CONFIG")
 OFFSITE_PORT=$(jq -r '.offsite_port // 23' "$CONFIG")
 SNAPSHOT_NAME=$(jq -r '.snapshot_name // ""' "$CONFIG")
+OFFSITE_PATH=$(jq -r '.offsite_path // "/home"' "$CONFIG")
 
+# Quell-Mapping (dieselbe Liste wie das Backup-Add-on). Recovery nutzt davon nur
+# dest + recovery-Rolle + container_mount, um sich 1:1 über das Hetzner-Mapping
+# zu bedienen. Fehlt die Liste, greift der eingebaute Default (Parität).
+SOURCES_JSON=$(jq -c '.backup_sources // []' "$CONFIG")
+if ! jq -e 'type=="array" and length>0' >/dev/null 2>&1 <<<"$SOURCES_JSON"; then
+  SOURCES_JSON='[
+    {"dest":"ZPool/BackupPC","recovery":"topdir","container_mount":"/data/backuppc","recovery_clean":false},
+    {"dest":"ZPool/Docker/backuppc/config","recovery":"import","container_mount":"/etc/backuppc","recovery_clean":true},
+    {"dest":"ZPool/Docker/backuppc/home","recovery":"import","container_mount":"/home/backuppc","recovery_clean":false},
+    {"dest":"ZPool/Docker/backuppc/ssh_config","recovery":"import","container_mount":"/etc/ssh/ssh_config","recovery_clean":false}
+  ]'
+fi
+
+# Mount-Wurzel = offsite_path (read-only); im Snapshot-Modus zusätzlich
+# .snapshots/<name> als Pfad-Präfix. Absolut identisch zum bisherigen Verhalten.
+OFFSITE_SOURCE="$OFFSITE_PATH"
 if [[ -n "$SNAPSHOT_NAME" ]]; then
-  OFFSITE_SOURCE="/home/.snapshots/${SNAPSHOT_NAME}/ZPool"
+  REL_PREFIX=".snapshots/${SNAPSHOT_NAME}"
   echo "BackupPC Umgebung startet (Snapshot-Modus)"
   echo "  Offsite:  ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
   echo "  Snapshot: ${SNAPSHOT_NAME}"
 else
-  OFFSITE_SOURCE="/home/ZPool"
+  REL_PREFIX=""
   echo "BackupPC Umgebung startet (Live-Modus)"
   echo "  Offsite: ${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PORT}"
 fi
+# Basis innerhalb des SSHFS-Mounts, aus der alle dest-Pfade aufgelöst werden.
+BASE="${SSHFS_MOUNT}${REL_PREFIX:+/$REL_PREFIX}"
+# TopDir-Quelle aus dem Mapping (Rolle "topdir").
+TOPDIR_DEST="$(jq -r '[.[] | select(.recovery=="topdir")][0].dest // "ZPool/BackupPC"' <<<"$SOURCES_JSON")"
+TOPDIR_PATH="${BASE}/${TOPDIR_DEST}"
 
 # ── SSH-Key schreiben ─────────────────────────────────────────────────────────
 if [[ "$(jq -r '.ssh_key_offsite // empty' "$CONFIG")" == "" ]]; then
@@ -110,7 +132,7 @@ fi
 
 # ── Datenstand ────────────────────────────────────────────────────────────────
 DATASTAND="unbekannt"
-PC_DIR="${SSHFS_MOUNT}/BackupPC/pc"
+PC_DIR="${TOPDIR_PATH}/pc"
 if [[ -d "$PC_DIR" ]]; then
   NEWEST_HOST=$(ls -dt "$PC_DIR"/*/ 2>/dev/null | head -1)
   if [[ -n "$NEWEST_HOST" ]]; then
@@ -120,18 +142,45 @@ fi
 echo "Datenstand: Letztes Host-Backup: $DATASTAND"
 echo "$DATASTAND" > /data/datastand
 
-# ── BackupPC-Config importieren (bei jedem Start frisch von SSHFS) ───────────
-echo "Importiere BackupPC-Config von Offsite..."
-rm -rf "${BACKUPPC_CONF:?}/"*
-cp -a "${SSHFS_MOUNT}/Docker/backuppc/config/." "$BACKUPPC_CONF/"
-cp -a "${SSHFS_MOUNT}/Docker/backuppc/home/." /home/backuppc/ 2>/dev/null || true
-echo "Config importiert."
+# ── Import-Quellen einspielen (bei jedem Start frisch von SSHFS) ─────────────
+# Jeder recovery=="import"-Eintrag wird über sein dest aus dem Hetzner-Mapping
+# nach container_mount kopiert. Verzeichnisse rekursiv (mit Inhalt), Dateien
+# einzeln (z.B. ssh_config). recovery_clean leert das Ziel vorher (nur Dirs).
+echo "Importiere Recovery-Quellen von Offsite..."
+NUM_SRC="$(jq 'length' <<<"$SOURCES_JSON")"
+for ((i=0; i<NUM_SRC; i++)); do
+  ENTRY="$(jq -c ".[$i]" <<<"$SOURCES_JSON")"
+  I_ROLE="$(jq -r '.recovery // ""' <<<"$ENTRY")"
+  [[ "$I_ROLE" == "import" ]] || continue
+  I_DEST="$(jq -r '.dest // ""' <<<"$ENTRY")"
+  I_TARGET="$(jq -r '.container_mount // ""' <<<"$ENTRY")"
+  I_CLEAN="$(jq -r '.recovery_clean // false' <<<"$ENTRY")"
+  [[ -n "$I_DEST" && -n "$I_TARGET" ]] || continue
+  SRC_PATH="${BASE}/${I_DEST#/}"
+  if [[ -d "$SRC_PATH" ]]; then
+    mkdir -p "$I_TARGET"
+    if [[ "$I_CLEAN" == "true" ]]; then
+      rm -rf "${I_TARGET:?}/"*
+      echo "  import (dir):  ${I_DEST} → ${I_TARGET} (clean)"
+    else
+      echo "  import (dir):  ${I_DEST} → ${I_TARGET}"
+    fi
+    cp -a "${SRC_PATH}/." "${I_TARGET}/" 2>/dev/null || true
+  elif [[ -e "$SRC_PATH" ]]; then
+    mkdir -p "$(dirname "$I_TARGET")"
+    cp -a "$SRC_PATH" "$I_TARGET" 2>/dev/null || true
+    echo "  import (file): ${I_DEST} → ${I_TARGET}"
+  else
+    echo "  import übersprungen (Quelle fehlt): ${SRC_PATH}"
+  fi
+done
+echo "Recovery-Quellen importiert."
 
 # TopDir setzen (bestehende Einträge entfernen, dann anhängen — wie BackupsDisable)
 perl -i -pe "s/^\s*\\\$Conf\{TopDir\}\s*=.*//" \
   "${BACKUPPC_CONF}/config.pl" 2>/dev/null || true
-printf '\n$Conf{TopDir} = "%s/BackupPC";\n' "$SSHFS_MOUNT" >> "${BACKUPPC_CONF}/config.pl"
-echo "TopDir gesetzt auf: ${SSHFS_MOUNT}/BackupPC"
+printf '\n$Conf{TopDir} = "%s";\n' "$TOPDIR_PATH" >> "${BACKUPPC_CONF}/config.pl"
+echo "TopDir gesetzt auf: ${TOPDIR_PATH}"
 
 # Neue Sicherungen immer deaktivieren (vorhandene Einträge entfernen, dann anhängen)
 perl -i -pe "s/^\\\$Conf\{BackupsDisable\}.*$//" \

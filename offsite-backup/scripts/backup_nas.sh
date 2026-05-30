@@ -3,7 +3,7 @@
 # Umgebungsvariable vom HA-Add-on (backup.sh). Defaults sichern Standalone-Betrieb.
 set -euo pipefail
 
-DATASET="${DATASET:-ZPool/BackupPC}"
+SNAPSHOT_PREFIX="${SNAPSHOT_PREFIX:-pre_rsync}"
 OFFSITE_USER="${OFFSITE_USER:?Offsite-User nicht gesetzt – wird von backup.sh übergeben}"
 OFFSITE_HOST="${OFFSITE_HOST:?Offsite-Host nicht gesetzt – wird von backup.sh übergeben}"
 OFFSITE_PATH="${OFFSITE_PATH:-/home}"
@@ -92,6 +92,13 @@ fi
 
 run_rsync() {
   local src="$1" dst="$2"
+  # --delete* greift nur bei Verzeichnis-Transfers. Bei einer Einzeldatei-Quelle
+  # (z. B. ssh_config) entfernen, sonst warnt/irrt rsync.
+  local RSYNC_OPTS_EFF=("${RSYNC_OPTS[@]}")
+  if [[ "$src" != */ && -f "$src" ]]; then
+    RSYNC_OPTS_EFF=(); local _o
+    for _o in "${RSYNC_OPTS[@]}"; do [[ "$_o" == --delete* ]] && continue; RSYNC_OPTS_EFF+=("$_o"); done
+  fi
   local retryable_codes=(10 11 12 30 35 255)
   local attempt=1 max_attempts=$((RSYNC_MAX_RETRIES + 1)) sleep_s="$RSYNC_RETRY_SLEEP"
 
@@ -100,7 +107,7 @@ run_rsync() {
     (while true; do echo "$(date '+%F %T'): läuft: $src"; sleep "$STATUS_INTERVAL"; done) &
     local status_pid=$!
     set +e
-    run_root rsync "${RSYNC_OPTS[@]}" -e "${RSYNC_SSH:-$SSH_CMD}" "$src" "$dst"
+    run_root rsync "${RSYNC_OPTS_EFF[@]}" -e "${RSYNC_SSH:-$SSH_CMD}" "$src" "$dst"
     local rc=$?
     set -e
     kill "$status_pid" >/dev/null 2>&1 || true
@@ -231,35 +238,85 @@ kill_stale_backup_procs() {
   return 0
 }
 
-kill_stale_backup_procs
-
-# Vorhandene pre_rsync-Snapshots im Log anzeigen (Diagnose)
-existing="$(run_root zfs list -H -t snapshot -o name,defer_destroy -s creation -r "$DATASET" \
-  | grep -E "^${DATASET}@pre_rsync" || true)"
-if [[ -n "$existing" ]]; then
-  echo "$(date '+%F %T'): Gefundene pre_rsync-Snapshots vor Cleanup:"
-  echo "$existing" | while IFS= read -r line; do echo "  $line"; done
+# Frei konfigurierbare Quell-Mounts. Kommen als JSON-Liste vom Add-on
+# (backup.sh -> $RUNDIR/backup_sources.json). Fehlt sie (Standalone), greift
+# der eingebaute Default = die historisch fest verdrahteten Quellen (Parität).
+DEFAULT_SOURCES_JSON='[
+  {"dataset":"ZPool/BackupPC","path":"","dest":"ZPool/BackupPC","snapshot":true,"parallel":true},
+  {"dataset":"","path":"/ZPool/Docker/backuppc/config","dest":"ZPool/Docker/backuppc/config","snapshot":false,"parallel":false},
+  {"dataset":"","path":"/ZPool/Docker/backuppc/home","dest":"ZPool/Docker/backuppc/home","snapshot":false,"parallel":false},
+  {"dataset":"","path":"/ZPool/Docker/backuppc/ssh_config","dest":"ZPool/Docker/backuppc/ssh_config","snapshot":false,"parallel":false},
+  {"dataset":"","path":"/ZPool/Docker/_DockerCreate","dest":"ZPool/Docker/_DockerCreate","snapshot":false,"parallel":false}
+]'
+if [[ -n "${RUNDIR:-}" && -s "${RUNDIR}/backup_sources.json" ]] \
+   && jq -e 'type=="array" and length>0' >/dev/null 2>&1 < "${RUNDIR}/backup_sources.json"; then
+  SOURCES_JSON="$(cat "${RUNDIR}/backup_sources.json")"
+  echo "$(date '+%F %T'): backup_sources aus Add-on-Konfiguration ($(jq 'length' <<<"$SOURCES_JSON") Quellen)"
+else
+  SOURCES_JSON="$DEFAULT_SOURCES_JSON"
+  echo "$(date '+%F %T'): backup_sources nicht übergeben – verwende Standard-Mounts"
 fi
 
-# Alte pre_rsync Snapshots löschen
-{ run_root zfs list -H -t snapshot -o name -s creation -r "$DATASET" \
-    | grep -E "^${DATASET}@pre_rsync" || true; } \
-| while IFS= read -r snap; do
-    [[ -z "$snap" ]] && continue
-    zfs_destroy_retry "$snap"
-  done
+kill_stale_backup_procs
 
-SNAP="pre_rsync_$(date +%F_%H-%M-%S)"
-MP="$(zfs get -H -o value mountpoint "$DATASET")"
-echo "$(date '+%F %T'): Snapshot erstellen: ${DATASET}@${SNAP}"
-run_root zfs snapshot "${DATASET}@${SNAP}"
+# Verwaiste Snapshots (vorheriger Lauf) je Snapshot-Dataset aufräumen.
+mapfile -t SNAP_DATASETS < <(jq -r '.[] | select(.snapshot==true) | .dataset // empty' <<<"$SOURCES_JSON" | sort -u)
+for ds in "${SNAP_DATASETS[@]}"; do
+  [[ -z "$ds" ]] && continue
+  existing="$(run_root zfs list -H -t snapshot -o name,defer_destroy -s creation -r "$ds" \
+    | grep -E "^${ds}@${SNAPSHOT_PREFIX}" || true)"
+  if [[ -n "$existing" ]]; then
+    echo "$(date '+%F %T'): Gefundene ${SNAPSHOT_PREFIX}-Snapshots vor Cleanup ($ds):"
+    echo "$existing" | while IFS= read -r line; do echo "  $line"; done
+  fi
+  { run_root zfs list -H -t snapshot -o name -s creation -r "$ds" \
+      | grep -E "^${ds}@${SNAPSHOT_PREFIX}" || true; } \
+  | while IFS= read -r snap; do
+      [[ -z "$snap" ]] && continue
+      zfs_destroy_retry "$snap"
+    done
+done
 
-run_rsync_parallel "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_PATH}/ZPool/BackupPC"
-echo "$(date '+%F %T'): Snapshot löschen: ${DATASET}@${SNAP}"
-zfs_destroy_retry "${DATASET}@${SNAP}"
+# Gemeinsamer Zeitstempel für alle Snapshots dieses Laufs.
+SNAP_TS="$(date +%F_%H-%M-%S)"
 
-run_rsync "/ZPool/Docker/backuppc/"     "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/backuppc/"
-run_rsync "/ZPool/Docker/_DockerCreate/" "${OFFSITE_USER}@${OFFSITE_HOST}:${OFFSITE_PATH}/ZPool/Docker/_DockerCreate/"
+NUM_SRC="$(jq 'length' <<<"$SOURCES_JSON")"
+for ((i=0; i<NUM_SRC; i++)); do
+  ENTRY="$(jq -c ".[$i]" <<<"$SOURCES_JSON")"
+  S_DATASET="$(jq -r '.dataset // ""' <<<"$ENTRY")"
+  S_PATH="$(jq -r '.path // ""' <<<"$ENTRY")"
+  S_DEST="$(jq -r '.dest' <<<"$ENTRY")"
+  S_SNAP="$(jq -r '.snapshot // false' <<<"$ENTRY")"
+  S_PAR="$(jq -r '.parallel // false' <<<"$ENTRY")"
+  DST_REMOTE="${OFFSITE_PATH%/}/${S_DEST#/}"
+
+  if [[ "$S_SNAP" == "true" ]]; then
+    [[ -z "$S_DATASET" ]] && { echo "$(date '+%F %T'): FEHLER: snapshot=true ohne dataset (dest=$S_DEST)"; exit 1; }
+    SNAP="${SNAPSHOT_PREFIX}_${SNAP_TS}"
+    MP="$(zfs get -H -o value mountpoint "$S_DATASET")"
+    echo "$(date '+%F %T'): Snapshot erstellen: ${S_DATASET}@${SNAP}"
+    run_root zfs snapshot "${S_DATASET}@${SNAP}"
+    if [[ "$S_PAR" == "true" ]]; then
+      run_rsync_parallel "$MP/.zfs/snapshot/$SNAP/" "$DST_REMOTE"
+    else
+      run_rsync "$MP/.zfs/snapshot/$SNAP/" "${OFFSITE_USER}@${OFFSITE_HOST}:${DST_REMOTE%/}/"
+    fi
+    echo "$(date '+%F %T'): Snapshot löschen: ${S_DATASET}@${SNAP}"
+    zfs_destroy_retry "${S_DATASET}@${SNAP}"
+  else
+    [[ -z "$S_PATH" ]] && { echo "$(date '+%F %T'): FEHLER: live-Quelle ohne path (dest=$S_DEST)"; exit 1; }
+    if [[ -d "$S_PATH" ]]; then
+      if [[ "$S_PAR" == "true" ]]; then
+        run_rsync_parallel "${S_PATH%/}/" "$DST_REMOTE"
+      else
+        run_rsync "${S_PATH%/}/" "${OFFSITE_USER}@${OFFSITE_HOST}:${DST_REMOTE%/}/"
+      fi
+    else
+      # Einzeldatei (z. B. ssh_config) – ohne Trailing-Slash, --delete entfällt.
+      run_rsync "$S_PATH" "${OFFSITE_USER}@${OFFSITE_HOST}:${DST_REMOTE}"
+    fi
+  fi
+done
 
 create_storagebox_snapshot() {
   local desc="Snap_$(date +%F)"

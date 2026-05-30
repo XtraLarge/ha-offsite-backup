@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 - 2026-05-30
+
+### Hinzugefügt
+- **Frei konfigurierbare Backup-Quellen (`backup_sources`).** Die bisher fest verdrahteten Mountpoints (ZFS-Pool + Docker-Verzeichnisse) sind jetzt eine Liste in der Add-on-Konfiguration. Jeder Eintrag hat `dataset`/`path` (Quelle), `dest` (Zielpfad relativ zu `offsite_path` auf Hetzner), `snapshot` (ZFS-Snapshot ja/nein, pro Quelle), `parallel` (sharded rsync), sowie `recovery`/`container_mount`/`recovery_clean` für die Recovery-Umgebung. Die mitgelieferten Defaults reproduzieren exakt das bisherige Verhalten (Parität).
+- `offsite_path` (Wurzel auf der Storage Box, Default `/home`) und `snapshot_prefix` (Default `pre_rsync`) als eigene Optionen.
+
+### Geändert
+- `backup_nas.sh`: Die fest codierten Snapshot-/rsync-Blöcke sind durch eine Schleife über `backup_sources` ersetzt. Einzeldatei-Quellen (z. B. `ssh_config`) werden erkannt und ohne `--delete*` übertragen.
+- `backup.sh`: reicht `backup_sources` (base64), `offsite_path` und `snapshot_prefix` an die NAS-Session weiter.
+
 ## 1.2.49 - 2026-05-29
 
 ### Behoben

@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.2.49"
+version: "1.3.0"
 slug: offsite_backup
 description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -28,6 +28,49 @@ options:
   ssh_key_offsite: ""
   offsite_token: ""
   backuppc_port: 8080
+  offsite_path: "/home"
+  snapshot_prefix: "pre_rsync"
+  backup_sources:
+    - dataset: "ZPool/BackupPC"
+      path: ""
+      dest: "ZPool/BackupPC"
+      snapshot: true
+      parallel: true
+      recovery: "topdir"
+      container_mount: "/data/backuppc"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/config"
+      dest: "ZPool/Docker/backuppc/config"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/etc/backuppc"
+      recovery_clean: true
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/home"
+      dest: "ZPool/Docker/backuppc/home"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/home/backuppc"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/ssh_config"
+      dest: "ZPool/Docker/backuppc/ssh_config"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/etc/ssh/ssh_config"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/_DockerCreate"
+      dest: "ZPool/Docker/_DockerCreate"
+      snapshot: false
+      parallel: false
+      recovery: "none"
+      container_mount: ""
+      recovery_clean: false
 
 schema:
   zfs_storage_host: str
@@ -47,6 +90,17 @@ schema:
   ssh_key_offsite: password
   offsite_token: password
   backuppc_port: int
+  offsite_path: str
+  snapshot_prefix: str
+  backup_sources:
+    - dataset: str?
+      path: str?
+      dest: str
+      snapshot: bool
+      parallel: bool
+      recovery: str?
+      container_mount: str?
+      recovery_clean: bool?
 
 docker_api: true
 hassio_api: true

@@ -1,3 +1,13 @@
+## 2.1.0
+
+- **Recovery-Mounts werden aus `backup_sources` abgeleitet** — dieselbe Liste wie im Offsite-Backup-Add-on (identische Defaults, keine geteilte Datei). Über das 1:1-Mapping auf Hetzner (`dest` relativ zu `offsite_path`) bedient sich die Recovery aus genau den Pfaden, die das Backup geschrieben hat:
+  - `recovery: topdir` → `$Conf{TopDir}` + Datenstand-Ermittlung (statt fest `/mnt/hetzner/BackupPC`)
+  - `recovery: import` → kopiert `dest` nach `container_mount`; Verzeichnisse rekursiv, Dateien einzeln (neu: `ssh_config` → `/etc/ssh/ssh_config`, damit SSH-Zugriffskeys/Host-Registrierung erhalten bleiben und beim Recovery keine Neuregistrierung der Geräte nötig ist). `recovery_clean: true` leert das Ziel vorher.
+  - `recovery: none` → reine Backup-Quelle (z. B. `_DockerCreate`), bei Recovery ignoriert.
+- `offsite_path` als eigene Option (Default `/home`); SSHFS-Mount-Wurzel statt fest `/home/ZPool`.
+- LogDir bleibt lokal (`/data/backuppc/log`) — Arbeitsdaten weichen bewusst vom Mapping ab.
+- SSHFS bleibt read-only (`ro`).
+
 ## 2.0.12
 
 - SSHFS als read-only (`ro`) gemountet — verhindert dass Recovery-BackupPC LOCK-Dateien und andere Schreiboperationen auf Hetzner ausführt und dabei laufende rsync-Transfers stört

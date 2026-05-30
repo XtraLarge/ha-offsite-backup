@@ -1,5 +1,5 @@
 name: BackupPC Recovery
-version: "2.0.12"
+version: "2.1.0"
 slug: backuppc_recovery
 description: BackupPC4 Recovery-Umgebung via Offsite Storage Box (SSHFS). Nur bei Bedarf starten.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -18,6 +18,48 @@ options:
   mqtt_user: ""
   mqtt_password: ""
   ssh_key_offsite: ""
+  offsite_path: "/home"
+  backup_sources:
+    - dataset: "ZPool/BackupPC"
+      path: ""
+      dest: "ZPool/BackupPC"
+      snapshot: true
+      parallel: true
+      recovery: "topdir"
+      container_mount: "/data/backuppc"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/config"
+      dest: "ZPool/Docker/backuppc/config"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/etc/backuppc"
+      recovery_clean: true
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/home"
+      dest: "ZPool/Docker/backuppc/home"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/home/backuppc"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/backuppc/ssh_config"
+      dest: "ZPool/Docker/backuppc/ssh_config"
+      snapshot: false
+      parallel: false
+      recovery: "import"
+      container_mount: "/etc/ssh/ssh_config"
+      recovery_clean: false
+    - dataset: ""
+      path: "/ZPool/Docker/_DockerCreate"
+      dest: "ZPool/Docker/_DockerCreate"
+      snapshot: false
+      parallel: false
+      recovery: "none"
+      container_mount: ""
+      recovery_clean: false
 
 schema:
   offsite_user: str
@@ -29,6 +71,16 @@ schema:
   mqtt_user: str
   mqtt_password: str
   ssh_key_offsite: password
+  offsite_path: str
+  backup_sources:
+    - dataset: str?
+      path: str?
+      dest: str
+      snapshot: bool
+      parallel: bool
+      recovery: str?
+      container_mount: str?
+      recovery_clean: bool?
 
 privileged:
   - SYS_ADMIN
