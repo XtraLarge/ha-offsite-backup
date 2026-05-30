@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.1 - 2026-05-30
+
+### Geändert
+
+- **Fortschrittsanzeige an `backup_sources` angepasst.** Die alten festen Phasen-Muster (`rsync Docker Config (3/3)`, `BackupPC Pool (1/3)`, `Erstelle Hetzner Snapshot`) matchten nach dem 1.3.0-Umbau nicht mehr. `get_progress()` ermittelt den Stand jetzt serverseitig aus dem laufenden NAS-`run.log`:
+  - **Quelle X/N** aus dem neuen `Quelle i/NUM_SRC: dest`-Marker im Treiber-Loop.
+  - **Pool-%** aus `N Shards zu übertragen` + Zählung der neuen `Shard fertig: <shard>`-Marker (ab der letzten Kopfzeile, damit kein begrenztes Tail-Fenster nötig ist). Beispiel: `Quelle 1/5 · ZPool/BackupPC · Pool 75/159 (47%)`.
+  - **Offsite-Snapshot-%** aus `Snapshot-Status: … (NN%)`, danach `Fertig`.
+- Ein zusätzlicher, 8 s gecachter NAS-Aufruf (forced `bash -s`) berechnet die kompakte Statuszeile — keine großen Logs werden übertragen.
+
 ## 1.3.0 - 2026-05-30
 
 ### Hinzugefügt

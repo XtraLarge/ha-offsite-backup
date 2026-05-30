@@ -170,7 +170,9 @@ run_rsync_parallel() {
   for shard in "${shards[@]}"; do
     while (( $(jobs -rp | wc -l) >= jobs )); do wait -n 2>/dev/null || wait; done
     (
-      if ! RSYNC_SSH="$SSH_CMD_NOCTL" run_rsync "$src_root/$shard/" "${remote}:${dst_path}/$shard/"; then
+      if RSYNC_SSH="$SSH_CMD_NOCTL" run_rsync "$src_root/$shard/" "${remote}:${dst_path}/$shard/"; then
+        echo "$(date '+%F %T'): Shard fertig: $shard"
+      else
         : > "$rc_dir/fail.$BASHPID"
       fi
     ) &
@@ -289,6 +291,7 @@ for ((i=0; i<NUM_SRC; i++)); do
   S_SNAP="$(jq -r '.snapshot // false' <<<"$ENTRY")"
   S_PAR="$(jq -r '.parallel // false' <<<"$ENTRY")"
   DST_REMOTE="${OFFSITE_PATH%/}/${S_DEST#/}"
+  echo "$(date '+%F %T'): Quelle $((i+1))/$NUM_SRC: $S_DEST"
 
   if [[ "$S_SNAP" == "true" ]]; then
     [[ -z "$S_DATASET" ]] && { echo "$(date '+%F %T'): FEHLER: snapshot=true ohne dataset (dest=$S_DEST)"; exit 1; }

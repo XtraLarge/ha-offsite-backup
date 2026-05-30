@@ -224,28 +224,64 @@ def get_next_run():
         return None
 
 
-_PROGRESS_PATTERNS = [
-    ("erfolgreich abgeschlossen", "Fertig"),
-    ("rsync BackupPC Docker Konfiguration", "rsync Docker Config (3/3)"),
-    ("rsync BackupPC Docker Data", "rsync Docker Data (2/3)"),
-    ("rsync BackupPC Pool", "rsync BackupPC Pool (1/3)"),
-    ("Erstelle Hetzner Snapshot", "Hetzner Snapshot"),
-    ("Snapshot erstellen", "ZFS Snapshot"),
-]
+# Berechnet den Fortschritt serverseitig auf der NAS aus dem laufenden run.log
+# und gibt eine kompakte, pipe-getrennte Zeile zurück:
+#   src|pool_total|pool_done|pool_complete|snap_pct|finished
+# Die Pool-Zählung erfolgt ab der letzten "Shards zu …"-Kopfzeile, damit ein
+# 100-Zeilen-Tail-Fenster (das bei vielen Shards überläuft) nicht nötig ist.
+_PROGRESS_SNIPPET = f"""f="{REMOTE_RUNDIR}/run.log"
+[ -f "$f" ] || {{ echo "|||||"; exit 0; }}
+src=$(grep -oE 'Quelle [0-9]+/[0-9]+: [^ ]+' "$f" | tail -1 | sed 's/^Quelle //')
+fin=$(grep -c ': Fertig\\.' "$f")
+snap=$(grep -oE 'Snapshot-Status: [a-z]+ \\([0-9]+%\\)' "$f" | tail -1 | grep -oE '[0-9]+' | tail -1)
+hdr=$(grep -n 'Shards zu ' "$f" | tail -1 | cut -d: -f1)
+ptotal=""; pdone=""; pcomplete=0
+if [ -n "$hdr" ]; then
+  ptotal=$(sed -n "${{hdr}}p" "$f" | grep -oE '[0-9]+ Shards zu ' | grep -oE '[0-9]+' | head -1)
+  pdone=$(tail -n +"$hdr" "$f" | grep -c 'Shard fertig:')
+  tail -n +"$hdr" "$f" | grep -q 'Shards erfolgreich' && pcomplete=1
+fi
+printf '%s|%s|%s|%s|%s|%s\\n' "$src" "$ptotal" "$pdone" "$pcomplete" "$snap" "$fin"
+"""
+
+_progress_cache = {"ts": 0.0, "val": "Bereit"}
 
 
 def get_progress():
     if not is_backup_running():
         return "Bereit"
-    try:
-        lines = get_log_lines(100)
-        for line in reversed(lines):
-            for pattern, label in _PROGRESS_PATTERNS:
-                if pattern in line:
-                    return label
-    except Exception:
-        pass
-    return "Bereit"
+    now = time.time()
+    if now - _progress_cache["ts"] < 8:
+        return _progress_cache["val"]
+    val = _compute_progress()
+    _progress_cache.update(ts=now, val=val)
+    return val
+
+
+def _compute_progress():
+    r = _nas_ssh(_PROGRESS_SNIPPET, timeout=12)
+    if r is None or r.returncode != 0 or not r.stdout.strip():
+        return "Läuft"
+    parts = r.stdout.strip().splitlines()[-1].split("|")
+    if len(parts) != 6:
+        return "Läuft"
+    src, ptotal, pdone, pcomplete, snap, fin = parts
+    if fin and fin != "0":
+        return "Fertig"
+    if snap:
+        return f"Offsite-Snapshot {snap}%"
+    if not src:
+        return "Vorbereitung"
+    num, _, dest = src.partition(": ")
+    label = f"Quelle {num} · {dest}" if dest else f"Quelle {num}"
+    if ptotal and pcomplete != "1":
+        try:
+            t, d = int(ptotal), int(pdone or 0)
+            pct = round(d / t * 100) if t else 0
+            label += f" · Pool {d}/{t} ({pct}%)"
+        except ValueError:
+            pass
+    return label
 
 
 _backup_proc = None
