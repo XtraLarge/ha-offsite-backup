@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.3.1"
+version: "1.3.2"
 slug: offsite_backup
 description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -31,41 +31,41 @@ options:
   offsite_path: "/home"
   snapshot_prefix: "pre_rsync"
   backup_sources:
-    - dataset: "ZPool/BackupPC"
+    - dest: "ZPool/BackupPC"
+      dataset: "ZPool/BackupPC"
       path: ""
-      dest: "ZPool/BackupPC"
       snapshot: true
       parallel: true
       recovery: "topdir"
       container_mount: "/data/backuppc"
       recovery_clean: false
-    - dataset: ""
+    - dest: "ZPool/Docker/backuppc/config"
+      dataset: ""
       path: "/ZPool/Docker/backuppc/config"
-      dest: "ZPool/Docker/backuppc/config"
       snapshot: false
       parallel: false
       recovery: "import"
       container_mount: "/etc/backuppc"
       recovery_clean: true
-    - dataset: ""
+    - dest: "ZPool/Docker/backuppc/home"
+      dataset: ""
       path: "/ZPool/Docker/backuppc/home"
-      dest: "ZPool/Docker/backuppc/home"
       snapshot: false
       parallel: false
       recovery: "import"
       container_mount: "/home/backuppc"
       recovery_clean: false
-    - dataset: ""
+    - dest: "ZPool/Docker/backuppc/ssh_config"
+      dataset: ""
       path: "/ZPool/Docker/backuppc/ssh_config"
-      dest: "ZPool/Docker/backuppc/ssh_config"
       snapshot: false
       parallel: false
       recovery: "import"
       container_mount: "/etc/ssh/ssh_config"
       recovery_clean: false
-    - dataset: ""
+    - dest: "ZPool/Docker/_DockerCreate"
+      dataset: ""
       path: "/ZPool/Docker/_DockerCreate"
-      dest: "ZPool/Docker/_DockerCreate"
       snapshot: false
       parallel: false
       recovery: "none"
@@ -93,9 +93,9 @@ schema:
   offsite_path: str
   snapshot_prefix: str
   backup_sources:
-    - dataset: str?
+    - dest: str
+      dataset: str?
       path: str?
-      dest: str
       snapshot: bool
       parallel: bool
       recovery: str?
