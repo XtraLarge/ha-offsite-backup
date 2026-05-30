@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.3 - 2026-05-30
+
+### Behoben
+
+- CI „Validate Add-on" wird wieder grün (schlug bei jedem Push fehl):
+  - `squash: false` aus `build.yaml` entfernt — vom Supervisor (Docker Buildkit) nicht mehr unterstützt.
+  - Deprecated Architekturen `armhf`/`armv7` aus `build.yaml` (`build_from`) und `config.yaml` (`arch`) entfernt — seit HA 2025.12 nicht mehr unterstützt. Bleibt `aarch64` (Raspberry Pi 4) + `amd64`.
+  - `ingress_port: 8099` aus `config.yaml` entfernt — entspricht dem Default, der Linter beanstandet redundante Defaults. Verhalten unverändert.
+- ShellCheck-Warnungen in `scripts/` beseitigt: ungenutzte `body`-Variable entfernt, `local desc` von der Zuweisung getrennt (SC2155), die zwei bewusst client-seitig expandierenden Heredocs in `backup.sh` mit `# shellcheck disable=SC2087` annotiert.
+
 ## 1.3.2 - 2026-05-30
 
 ### Geändert
