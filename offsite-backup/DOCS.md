@@ -59,7 +59,7 @@ Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eing
 | `offsite_user` | Offsite Storage Box Benutzername | `u123456` |
 | `offsite_host` | Offsite Storage Box Hostname | `u123456.your-storagebox.de` |
 | `offsite_port` | SSH-Port der Storage Box | `23` |
-| `offsite_box_id` | Numerische Storage Box ID | `510043` |
+| `offsite_box_id` | Numerische Storage Box ID | `123456` |
 | `backup_schedule` | Cron-Ausdruck (Container-Zeit = UTC) | `0 18 * * 3` |
 | `ssh_key_storage` | Privater SSH-Key für ZFS-Storage-Verbindung | (mehrzeilig) |
 | `ssh_key_offsite` | Privater SSH-Key für Offsite Storage Box | (mehrzeilig) |
@@ -140,14 +140,14 @@ Das Dashboard ist über den HA-Sidebar-Eintrag "Offsite Backup" erreichbar (Ingr
 ### Was `backup_nas.sh` tut (läuft auf der NAS via SSH):
 
 1. Abhängigkeiten prüfen/installieren (rsync, jq, zfsutils-linux)
-2. Hetzner API Token validieren
+2. Offsite-API-Token validieren
 3. Alte `pre_rsync_*`-Snapshots löschen
-4. ZFS-Snapshot erstellen: `ZPool/BackupPC@pre_rsync_YYYY-MM-DD_HH-MM-SS`
-5. rsync 1: BackupPC-Pool → Hetzner `/home/ZPool/BackupPC/` (mit bis zu 5 Retries)
-6. rsync 2: Docker BackupPC-Config → Hetzner `/home/ZPool/Docker/backuppc/`
-7. rsync 3: Docker-Create-Scripts → Hetzner `/home/ZPool/Docker/_DockerCreate/`
-8. ZFS-Snapshot löschen
-9. Hetzner Storage Box Snapshot via API erstellen (`Snap_YYYY-MM-DD`)
+4. Für jede Quelle mit `snapshot: true` einen ZFS-Snapshot erstellen: `<dataset>@pre_rsync_YYYY-MM-DD_HH-MM-SS`
+5. Für **jede** Quelle aus `backup_sources` ein rsync an `<offsite_path>/<dest>/` (mit bis zu 5 Retries; `parallel: true` überträgt große Pools in Shards)
+6. ZFS-Snapshots wieder löschen
+7. Storage-Box-Snapshot via API erstellen (`Snap_YYYY-MM-DD`)
+
+> Welche Quellen gesichert werden, steuert die Option `backup_sources` – siehe das `backup_sources`-Konzept in der [README](../README.md). Frühere Versionen hatten die drei rsync-Ziele fest verdrahtet; seit 1.3.0 ist die Liste konfigurierbar.
 
 ### Retry-Logik
 
