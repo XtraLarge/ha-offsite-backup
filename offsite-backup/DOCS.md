@@ -1,209 +1,211 @@
-# Offsite Backup – Dokumentation
+# Offsite Backup – Documentation
 
-## Übersicht
+**English** | [Deutsch](DOCS.de.md)
 
-Das Add-on läuft auf Home Assistant und steuert den wöchentlichen Offsite-Backup des NAS auf die Hetzner Storage Box. Es verbindet sich per SSH zur NAS und führt dort `backup_nas.sh` aus, das einen ZFS-Snapshot erstellt und per rsync nach Hetzner überträgt.
+## Overview
 
-**Was dieses Add-on macht:**
-- Automatischer Backup nach Zeitplan (Cron) oder manuell via Dashboard
-- ZFS-Snapshot auf der NAS → rsync zum Hetzner-Account mit Retry-Logik
-- Hetzner Storage Box Snapshot per API nach erfolgreichem Backup
-- Web-Dashboard mit Status, Log und Snapshot-Übersicht
-- BackupPC Recovery Add-on starten/stoppen direkt aus dem Dashboard
-- MQTT-Sensoren für HA-Integration (Status, Zeitstempel, Fortschritt)
+This add-on runs on Home Assistant and drives the weekly offsite backup of the NAS to the storage box. It connects to the NAS via SSH and runs `backup_nas.sh` there, which creates a ZFS snapshot and transfers it to the offsite target via rsync.
+
+**What this add-on does:**
+- Automatic backup on a schedule (cron) or manually via the dashboard
+- ZFS snapshot on the NAS → rsync to the offsite target with retry logic
+- Storage-box snapshot via API after a successful backup
+- Web dashboard with status, log and snapshot overview
+- Start/stop the BackupPC Recovery add-on directly from the dashboard
+- MQTT sensors for HA integration (status, timestamps, progress)
 
 ---
 
-## 1. Voraussetzungen
+## 1. Requirements
 
-### ZFS-Storage-Setup
+### Storage-host setup
 
-Der ZFS-Storage-Host (auf den das Add-on per SSH verbindet) muss folgendes haben:
+The storage host (the one the add-on connects to via SSH) must have:
 
-- ZFS-Pool `ZPool` mit Dataset `ZPool/BackupPC` (BackupPC-Daten)
-- Optional: `/ZPool/Docker/backuppc/` und `/ZPool/Docker/_DockerCreate/` (Docker-Config)
-- SSH-Server auf Port 22 (Standard)
-- `rsync`, `openssh-client`, `jq`, `zfsutils-linux` installiert (wird vom Skript geprüft/nachinstalliert)
+- A ZFS pool `ZPool` with the dataset `ZPool/BackupPC` (BackupPC data)
+- Optional: `/ZPool/Docker/backuppc/` and `/ZPool/Docker/_DockerCreate/` (Docker config)
+- An SSH server on port 22 (default)
+- `rsync`, `openssh-client`, `jq`, `zfsutils-linux` installed (the script checks/installs them)
 
-### Hetzner Storage Box
+### Offsite storage box
 
-- SSH-Zugang mit Ed25519-Key aktiv
-- Port 23 (Standard für Hetzner Storage Boxes)
-- Zieldirektorie: `/home/ZPool/BackupPC/` und `/home/ZPool/Docker/`
+- SSH access with an Ed25519 key enabled
+- Port 23 (the default for storage boxes)
+- Target directories: `/home/ZPool/BackupPC/` and `/home/ZPool/Docker/`
 
-### SSH-Key auf dem ZFS-Storage-Host eintragen
+### Register the SSH key on the storage host
 
-Den **Public Key** von `ssh_key_storage` in `/root/.ssh/authorized_keys` des ZFS-Storage-Hosts eintragen:
+Add the **public key** of `ssh_key_storage` to `/root/.ssh/authorized_keys` on the storage host:
 
 ```
-command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA... hassio-offsite-backup
+command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA... ha-offsite-storage
 ```
 
-Den Public Key erzeugt man aus dem privaten Key:
+Derive the public key from the private key:
 ```bash
 ssh-keygen -y -f id_ed25519_storage
 ```
 
 ---
 
-## 2. Konfiguration
+## 2. Configuration
 
-Alle Felder werden in der HA-Oberfläche unter **Add-on → Konfiguration** eingetragen.
+All fields are entered in the HA interface under **Add-on → Configuration**.
 
-### Pflichtfelder
+### Required fields
 
-| Feld | Beschreibung | Beispiel |
-|------|-------------|---------|
-| `zfs_storage_host` | Hostname oder IP des ZFS-Storage-Hosts | `nas.example.local` |
-| `zfs_storage_user` | SSH-Benutzer auf dem ZFS-Storage-Host | `root` |
-| `offsite_user` | Offsite Storage Box Benutzername | `u123456` |
-| `offsite_host` | Offsite Storage Box Hostname | `u123456.your-storagebox.de` |
-| `offsite_port` | SSH-Port der Storage Box | `23` |
-| `offsite_box_id` | Numerische Storage Box ID | `123456` |
-| `backup_schedule` | Cron-Ausdruck (Container-Zeit = UTC) | `0 18 * * 3` |
-| `ssh_key_storage` | Privater SSH-Key für ZFS-Storage-Verbindung | (mehrzeilig) |
-| `ssh_key_offsite` | Privater SSH-Key für Offsite Storage Box | (mehrzeilig) |
-| `offsite_token` | Offsite Storage API Token | `hGsX7...` |
+| Field | Description | Example |
+|-------|-------------|---------|
+| `zfs_storage_host` | Hostname or IP of the storage host | `nas.example.local` |
+| `zfs_storage_user` | SSH user on the storage host | `root` |
+| `offsite_user` | Offsite storage-box username | `u123456` |
+| `offsite_host` | Offsite storage-box hostname | `u123456.your-storagebox.de` |
+| `offsite_port` | SSH port of the storage box | `23` |
+| `offsite_box_id` | Numeric storage-box ID | `123456` |
+| `backup_schedule` | Cron expression (container time = UTC) | `0 18 * * 3` |
+| `ssh_key_storage` | Private SSH key for the storage-host connection | (multi-line) |
+| `ssh_key_offsite` | Private SSH key for the offsite storage box | (multi-line) |
+| `offsite_token` | Offsite storage API token | `hGsX7...` |
 
-> **Achtung Zeitzone:** Der Container läuft in UTC. `0 18 * * 3` entspricht Mittwoch 20:00 CEST (UTC+2). Cron-Zeit entsprechend anpassen.
+> **Time-zone note:** the container runs in UTC. `0 18 * * 3` equals Wednesday 20:00 CEST (UTC+2). Adjust the cron time accordingly.
 
-### Optionale Felder
+### Optional fields
 
-| Feld | Beschreibung | Standard |
-|------|-------------|---------|
-| `loki_url` | Loki Push-URL für Remote-Logging | leer (deaktiviert) |
-| `backuppc_port` | Port des BackupPC Recovery Add-ons | `8080` |
-| `mqtt_host` | MQTT-Broker IP/Hostname | leer |
-| `mqtt_port` | MQTT-Broker Port | `1883` |
-| `mqtt_user` | MQTT-Benutzer | leer |
-| `mqtt_password` | MQTT-Passwort | leer |
+| Field | Description | Default |
+|-------|-------------|---------|
+| `loki_url` | Loki push URL for remote logging | empty (disabled) |
+| `backuppc_port` | Port of the BackupPC Recovery add-on | `8080` |
+| `mqtt_host` | MQTT broker IP/hostname | empty |
+| `mqtt_port` | MQTT broker port | `1883` |
+| `mqtt_user` | MQTT user | empty |
+| `mqtt_password` | MQTT password | empty |
 
-### SSH-Keys eintragen
+### Entering SSH keys
 
-SSH-Keys (`ssh_key_storage`, `ssh_key_offsite`) werden als `password`-Felder eingetragen (in der HA-UI mit `*` maskiert). Zwei Formate werden akzeptiert:
+SSH keys (`ssh_key_storage`, `ssh_key_offsite`) are entered as `password` fields (masked with `*` in the HA UI). Two formats are accepted:
 
-**Mehrzeilig** (direkt einfügen mit Enter):
+**Multi-line** (paste directly with Enter):
 ```
 -----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEA...
 -----END OPENSSH PRIVATE KEY-----
 ```
 
-**Einzeilig** (mit `\n` als Zeilentrennzeichen):
+**Single-line** (with `\n` as the line separator):
 ```
 -----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA...\n-----END OPENSSH PRIVATE KEY-----\n
 ```
 
 ---
 
-## 3. Web-Dashboard
+## 3. Web dashboard
 
-Das Dashboard ist über den HA-Sidebar-Eintrag "Offsite Backup" erreichbar (Ingress auf Port 8099).
+The dashboard is reachable via the HA sidebar entry "Offsite Backup" (ingress on port 8099).
 
-### Status-Karte
-- **Letzter Lauf:** Zeitstempel des letzten Backup-Starts
-- **Ergebnis:** `success` (grün), `failed` (rot), `unbekannt`
-- **NAS:** Aktuell konfigurierter NAS-Host
-- **Zeitplan:** Cron-Ausdruck
-- **Nächster Backup:** Berechnete nächste Ausführungszeit
-- **BackupPC:** Ob die Recovery-Umgebung läuft
+### Status card
+- **Last run:** timestamp of the last backup start
+- **Result:** `success` (green), `failed` (red), `unknown`
+- **NAS:** currently configured NAS host
+- **Schedule:** cron expression
+- **Next backup:** computed next run time
+- **BackupPC:** whether the recovery environment is running
 
-### Aktionen
-- **Backup jetzt starten:** Manueller Backup-Start (mit Bestätigungsdialog)
-- **Log aktualisieren:** Log-Bereich sofort neu laden (Toast-Bestätigung + Auto-Scroll)
+### Actions
+- **Start backup now:** manual backup start (with a confirmation dialog)
+- **Refresh log:** reload the log area immediately (toast confirmation + auto-scroll)
 
-### BackupPC Umgebung-Karte
-- **Datenquelle:** Dropdown für Live-Daten oder Hetzner-Snapshot
-- **BackupPC starten:** Startet das Recovery Add-on mit den gewählten Daten
-- **BackupPC beenden:** Stoppt das Recovery Add-on
-- **BackupPC UI öffnen:** Öffnet `http://<HA-IP>:8080` in neuem Tab (nur wenn aktiv)
+### BackupPC environment card
+- **Data source:** dropdown for live data or a storage-box snapshot
+- **Start BackupPC:** starts the recovery add-on with the selected data
+- **Stop BackupPC:** stops the recovery add-on
+- **Open BackupPC UI:** opens `http://<HA-IP>:8080` in a new tab (only when active)
 
-### Hetzner Snapshots-Karte
-- Listet alle Snapshots der Storage Box (Name, Datum, Beschreibung)
-- Snapshots können direkt im Dropdown der BackupPC-Karte ausgewählt werden
+### Snapshots card
+- Lists all snapshots of the storage box (name, date, description)
+- Snapshots can be selected directly in the dropdown of the BackupPC card
 
-### Log-Karte
-- Zeigt die letzten 100 Zeilen des Backup-Logs
-- Aktualisiert automatisch alle 30 Sekunden
-- Scrollt automatisch nach unten wenn man am Ende war
-
----
-
-## 4. Backup-Ablauf im Detail
-
-### Was `backup.sh` tut (läuft im Add-on-Container):
-
-1. SSH-Agent starten und Hetzner-Key laden
-2. `backup_nas.sh` via SSH-Pipe an die NAS senden (mit Agent Forwarding)
-3. Nach Abschluss: Loki-Log senden, Status in `/data/logs/status.json` schreiben
-
-### Was `backup_nas.sh` tut (läuft auf der NAS via SSH):
-
-1. Abhängigkeiten prüfen/installieren (rsync, jq, zfsutils-linux)
-2. Offsite-API-Token validieren
-3. Alte `pre_rsync_*`-Snapshots löschen
-4. Für jede Quelle mit `snapshot: true` einen ZFS-Snapshot erstellen: `<dataset>@pre_rsync_YYYY-MM-DD_HH-MM-SS`
-5. Für **jede** Quelle aus `backup_sources` ein rsync an `<offsite_path>/<dest>/` (mit bis zu 5 Retries; `parallel: true` überträgt große Pools in Shards)
-6. ZFS-Snapshots wieder löschen
-7. Storage-Box-Snapshot via API erstellen (`Snap_YYYY-MM-DD`)
-
-> Welche Quellen gesichert werden, steuert die Option `backup_sources` – siehe das `backup_sources`-Konzept in der [README](../README.md). Frühere Versionen hatten die drei rsync-Ziele fest verdrahtet; seit 1.3.0 ist die Liste konfigurierbar.
-
-### Retry-Logik
-
-rsync versucht bei Netzwerkfehlern automatisch neu (rc 10, 11, 12, 30, 35, 255):
-- Standard: 5 Retries mit 120 Sekunden Pause
-- IO-Timeout: 600 Sekunden ohne Datentransfer → Fehler
+### Log card
+- Shows the last 100 lines of the backup log
+- Refreshes automatically every 30 seconds
+- Auto-scrolls to the bottom if you were already at the end
 
 ---
 
-## 5. MQTT-Integration
+## 4. Backup flow in detail
 
-Bei konfiguriertem MQTT werden folgende Entitäten als Auto-Discovery publiziert:
+### What `backup.sh` does (runs in the add-on container):
 
-| Entität | Typ | Beschreibung |
-|---------|-----|-------------|
-| `sensor.backup_status` | Sensor | `success` / `failed` / `unbekannt` |
-| `sensor.letzter_backup` | Timestamp-Sensor | Letzter Backup-Zeitstempel |
-| `sensor.nachster_backup` | Timestamp-Sensor | Nächster geplanter Backup |
-| `sensor.backup_fortschritt` | Sensor | Aktueller Schritt während Backup |
-| `binary_sensor.backup_lauft` | Binary-Sensor | Läuft gerade ein Backup? |
-| `binary_sensor.recovery_aktiv` | Binary-Sensor | Ist BackupPC Recovery aktiv? |
-| `button.backup_starten` | Button | Backup manuell triggern |
-| `switch.recovery_umgebung` | Switch | Recovery starten/stoppen |
+1. Start the SSH agent and load the offsite key
+2. Send `backup_nas.sh` to the NAS via an SSH pipe (with agent forwarding)
+3. On completion: send the Loki log, write status to `/data/logs/status.json`
+
+### What `backup_nas.sh` does (runs on the NAS via SSH):
+
+1. Check/install dependencies (rsync, jq, zfsutils-linux)
+2. Validate the offsite API token
+3. Delete old `pre_rsync_*` snapshots
+4. For each source with `snapshot: true`, create a ZFS snapshot: `<dataset>@pre_rsync_YYYY-MM-DD_HH-MM-SS`
+5. For **each** source in `backup_sources`, one rsync to `<offsite_path>/<dest>/` (with up to 5 retries; `parallel: true` transfers large pools in shards)
+6. Delete the ZFS snapshots again
+7. Create a storage-box snapshot via API (`Snap_YYYY-MM-DD`)
+
+> Which sources are backed up is driven by the `backup_sources` option – see the `backup_sources` concept in the [README](../README.md). Earlier versions hard-wired the three rsync targets; since 1.3.0 the list is configurable.
+
+### Retry logic
+
+rsync automatically retries on network errors (rc 10, 11, 12, 30, 35, 255):
+- Default: 5 retries with a 120-second pause
+- IO timeout: 600 seconds without data transfer → error
+
+---
+
+## 5. MQTT integration
+
+When MQTT is configured, the following entities are published via auto-discovery:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `sensor.backup_status` | Sensor | `success` / `failed` / `unknown` |
+| `sensor.letzter_backup` | Timestamp sensor | Last backup timestamp |
+| `sensor.nachster_backup` | Timestamp sensor | Next scheduled backup |
+| `sensor.backup_fortschritt` | Sensor | Current step during backup |
+| `binary_sensor.backup_lauft` | Binary sensor | Is a backup running? |
+| `binary_sensor.recovery_aktiv` | Binary sensor | Is BackupPC Recovery active? |
+| `button.backup_starten` | Button | Trigger a backup manually |
+| `switch.recovery_umgebung` | Switch | Start/stop recovery |
 
 ---
 
 ## 6. Troubleshooting
 
-### Backup schlägt fehl: `error in libcrypto`
-SSH-Key ist beschädigt. Schlüssel neu generieren und in der HA-Konfiguration eintragen.
+### Backup fails: `error in libcrypto`
+The SSH key is corrupted. Regenerate the key and enter it in the HA configuration.
 
-### Backup schlägt fehl: `Permission denied (publickey)`
-Public Key des `ssh_key_storage` nicht in der `authorized_keys` des ZFS-Storage-Hosts. Eintrag prüfen:
+### Backup fails: `Permission denied (publickey)`
+The public key of `ssh_key_storage` is not in the `authorized_keys` of the storage host. Check the entry:
 ```bash
-grep 'hassio' /root/.ssh/authorized_keys
+grep 'ha-offsite' /root/.ssh/authorized_keys
 ```
 
-### Backup schlägt fehl: `dataset does not exist`
-`zfs_storage_host` zeigt auf den falschen Host oder `ZPool/BackupPC` existiert nicht.
-Prüfen: `zfs list ZPool/BackupPC` auf dem konfigurierten ZFS-Storage-Host.
+### Backup fails: `dataset does not exist`
+`zfs_storage_host` points at the wrong host, or `ZPool/BackupPC` does not exist.
+Check: `zfs list ZPool/BackupPC` on the configured storage host.
 
-### Backup schlägt fehl: `dataset is busy`
-Ein alter rsync-Prozess hält den ZFS-Snapshot belegt.
+### Backup fails: `dataset is busy`
+An old rsync process is holding the ZFS snapshot.
 ```bash
 fuser /ZPool/BackupPC/.zfs/snapshot/
-# Prozess identifizieren und ggf. beenden:
+# Identify the process and stop it if needed:
 kill -9 <PID>
 zfs destroy ZPool/BackupPC@pre_rsync_...
 ```
 
-### Cron-Backup läuft nicht zur erwarteten Zeit
-Der Container läuft in UTC. Beispiel: `0 18 * * 3` = Mittwoch 18:00 UTC = 20:00 CEST.
+### The cron backup does not run at the expected time
+The container runs in UTC. Example: `0 18 * * 3` = Wednesday 18:00 UTC = 20:00 CEST.
 
-### Dashboard leer / API antwortet nicht
-Add-on neu starten. Log im HA Add-on-Log prüfen (nicht das Backup-Log im Dashboard).
+### Dashboard empty / API not responding
+Restart the add-on. Check the HA add-on log (not the backup log in the dashboard).
 
-### SUPERVISOR_TOKEN nicht verfügbar
-Add-on nicht mit `hassio_role: manager` konfiguriert. Recovery-Steuerung funktioniert nicht.
-Sicherstellen, dass die `config.yaml` des Add-ons `hassio_role: manager` und `hassio_api: true` enthält.
+### SUPERVISOR_TOKEN not available
+The add-on is not configured with `hassio_role: manager`. Recovery control will not work.
+Make sure the add-on's `config.yaml` contains `hassio_role: manager` and `hassio_api: true`.

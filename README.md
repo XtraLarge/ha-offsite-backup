@@ -1,148 +1,150 @@
 # ha-offsite-backup
 
-Ein Home-Assistant-Add-on-Repository für **automatische Offsite-Backups per rsync + ZFS-Snapshot** auf einen externen Storage-Host – mit einer integrierten **BackupPC4-Recovery-Umgebung**, die direkt in Home Assistant läuft.
+**English** | [Deutsch](README.de.md)
 
-> **Kurz gesagt:** Dein NAS sichert sich wöchentlich von selbst an einen entfernten Ort. Geht das NAS kaputt, startest du mit einem Klick eine vollständige BackupPC-Oberfläche in Home Assistant und holst dir einzelne Dateien oder ganze Sicherungen zurück – ohne das Original.
+A Home Assistant add-on repository for **automatic offsite backups via rsync + ZFS snapshot** to a remote storage host – with an integrated **BackupPC4 recovery environment** that runs directly inside Home Assistant.
 
----
-
-## Was es macht
-
-- **Automatischer Offsite-Backup** nach Zeitplan (Cron) oder manuell per Web-Dashboard
-- **ZFS-Snapshot** auf dem Storage-Host für einen konsistenten Stand, dann **rsync** zum Offsite-Ziel (mit Retry-Logik bei Netzwerkabbrüchen)
-- **Storage-Box-Snapshot** per API nach erfolgreichem Lauf (versionierte Wiederherstellungspunkte)
-- **Web-Dashboard** mit Status, Live-Log, Snapshot-Liste und Fortschrittsanzeige
-- **BackupPC-Recovery auf Knopfdruck** – greift per SSHFS direkt auf das Offsite-Ziel zu, ohne Daten zurückzukopieren
-- **MQTT-Auto-Discovery** für Status-Sensoren, Buttons und Switches in Home Assistant
-
-## Enthaltene Add-ons
-
-| Add-on | Funktion | Läuft |
-|--------|----------|-------|
-| **Offsite Backup** | Steuert Backup-Zeitplan, rsync, Snapshots und das Dashboard | dauerhaft |
-| **BackupPC Recovery** | BackupPC4-Weboberfläche mit direktem Offsite-Zugriff (SSHFS) | nur bei Bedarf |
+> **In short:** Your NAS backs itself up to a remote location every week. If the NAS ever dies, you start a full BackupPC interface inside Home Assistant with a single click and restore individual files or whole backups – without touching the original.
 
 ---
 
-## Wie es funktioniert
+## What it does
+
+- **Automatic offsite backup** on a schedule (cron) or manually via the web dashboard
+- **ZFS snapshot** on the storage host for a consistent state, then **rsync** to the offsite target (with retry logic for network drops)
+- **Storage-box snapshot** via API after a successful run (versioned restore points)
+- **Web dashboard** with status, live log, snapshot list and progress indicator
+- **BackupPC recovery at the push of a button** – accesses the offsite target directly via SSHFS, without copying data back
+- **MQTT auto-discovery** for status sensors, buttons and switches in Home Assistant
+
+## Included add-ons
+
+| Add-on | Function | Runs |
+|--------|----------|------|
+| **Offsite Backup** | Drives the backup schedule, rsync, snapshots and the dashboard | continuously |
+| **BackupPC Recovery** | BackupPC4 web interface with direct offsite access (SSHFS) | only when needed |
+
+---
+
+## How it works
 
 ```
- Home Assistant                  Storage-Host (ZFS)            Offsite-Ziel
+ Home Assistant                  Storage host (ZFS)            Offsite target
  ┌────────────────────┐  SSH     ┌──────────────────┐  rsync   ┌──────────────────┐
- │ Offsite Backup     │─────────▶│ ZFS-Snapshot     │─────────▶│ <offsite_path>/  │
- │  • Cron-Scheduler  │  (Pipe)  │ rsync je Quelle  │          │   ZPool/BackupPC  │
- │  • Web-Dashboard   │          └──────────────────┘   API    │   Docker/...      │
- │  • MQTT-Status     │──────────────────────────────────────▶ │   Snap_YYYY-MM-DD │
+ │ Offsite Backup     │─────────▶│ ZFS snapshot     │─────────▶│ <offsite_path>/  │
+ │  • cron scheduler  │  (pipe)  │ rsync per source │          │   ZPool/BackupPC  │
+ │  • web dashboard   │          └──────────────────┘   API    │   Docker/...      │
+ │  • MQTT status     │──────────────────────────────────────▶ │   Snap_YYYY-MM-DD │
  │                    │                                         └──────────────────┘
  │ BackupPC Recovery  │  SSHFS (read-only)                              ▲
- │  (bei Bedarf)      │─────────────────────────────────────────────────┘
- │  Web-UI :8080      │   greift direkt auf die Offsite-Snapshots zu
+ │  (on demand)       │─────────────────────────────────────────────────┘
+ │  web UI :8080      │   accesses the offsite snapshots directly
  └────────────────────┘
 ```
 
-**Backup-Ablauf:**
-1. Das Add-on öffnet eine SSH-Session zum Storage-Host und schiebt das Backup-Skript per Pipe hinüber (der Offsite-Key bleibt dabei im Add-on und wird nur per Agent-Forwarding genutzt – er liegt nie auf dem Storage-Host).
-2. Auf dem Storage-Host: ZFS-Snapshot der konfigurierten Datasets für einen konsistenten Stand.
-3. Für jede Quelle aus `backup_sources` ein rsync ans Offsite-Ziel (große Pools werden in Shards parallelisiert).
-4. ZFS-Snapshot aufräumen, anschließend einen versionierten Storage-Box-Snapshot per API (`Snap_YYYY-MM-DD`).
+**Backup flow:**
+1. The add-on opens an SSH session to the storage host and pushes the backup script over via a pipe (the offsite key stays inside the add-on and is only used via agent forwarding – it never lands on the storage host).
+2. On the storage host: a ZFS snapshot of the configured datasets for a consistent state.
+3. For each source in `backup_sources`, one rsync to the offsite target (large pools are parallelised in shards).
+4. Clean up the ZFS snapshot, then create a versioned storage-box snapshot via API (`Snap_YYYY-MM-DD`).
 
-**Recovery-Ablauf:**
-1. Im Dashboard die **Datenquelle** wählen – Live-Stand oder ein älterer Offsite-Snapshot.
-2. **BackupPC starten** – die Recovery bekommt Zugangsdaten und `backup_sources` automatisch durchgereicht und mountet das Offsite-Ziel **read-only** per SSHFS.
-3. Die BackupPC-Weboberfläche ist nach ~30–60 s unter `http://<HA-IP>:8080/BackupPC_Admin` erreichbar.
-4. Dateien wie gewohnt wiederherstellen – es werden **keine neuen Sicherungen** geschrieben (`BackupsDisable=2`).
+**Recovery flow:**
+1. In the dashboard, pick the **data source** – the live state or an older offsite snapshot.
+2. **Start BackupPC** – the recovery add-on automatically receives the credentials and `backup_sources` and mounts the offsite target **read-only** via SSHFS.
+3. The BackupPC web interface is reachable after ~30–60 s at `http://<HA-IP>:8080/BackupPC_Admin`.
+4. Restore files as usual – **no new backups** are written (`BackupsDisable=2`).
 
-### Das `backup_sources`-Konzept
+### The `backup_sources` concept
 
-Was gesichert und wie es bei einer Recovery eingebunden wird, steuert eine einzige Liste – `backup_sources`. Beide Add-ons teilen dieselbe Struktur, sodass die Recovery sich aus genau den Pfaden bedient, die das Backup geschrieben hat (1:1-Mapping über `dest` relativ zu `offsite_path`):
+What gets backed up and how it is mounted during recovery is driven by a single list – `backup_sources`. Both add-ons share the same structure, so recovery serves itself from exactly the paths the backup wrote (1:1 mapping via `dest` relative to `offsite_path`):
 
-| Feld | Bedeutung |
-|------|-----------|
-| `dest` | Zielpfad am Offsite-Ziel, relativ zu `offsite_path` (z. B. `ZPool/BackupPC`) |
-| `dataset` | ZFS-Dataset, von dem ein Snapshot gezogen wird (leer = kein Snapshot) |
-| `path` | Quellpfad auf dem Storage-Host, wenn kein Dataset (z. B. ein Verzeichnis) |
-| `snapshot` | `true` = vor rsync ZFS-Snapshot ziehen |
-| `parallel` | `true` = großen Pool in Shards parallel übertragen |
-| `recovery` | `topdir` (BackupPC-Pool) · `import` (in Container kopieren) · `none` (nur Backup) |
-| `container_mount` | Zielpfad im Recovery-Container für `recovery: import` |
-| `recovery_clean` | `true` = Ziel vor dem Import leeren |
+| Field | Meaning |
+|-------|---------|
+| `dest` | Target path on the offsite target, relative to `offsite_path` (e.g. `ZPool/BackupPC`) |
+| `dataset` | ZFS dataset to snapshot (empty = no snapshot) |
+| `path` | Source path on the storage host when there is no dataset (e.g. a directory) |
+| `snapshot` | `true` = take a ZFS snapshot before rsync |
+| `parallel` | `true` = transfer a large pool in parallel shards |
+| `recovery` | `topdir` (BackupPC pool) · `import` (copy into container) · `none` (backup only) |
+| `container_mount` | Target path inside the recovery container for `recovery: import` |
+| `recovery_clean` | `true` = empty the target before importing |
 
-> Neue Quelle sichern? Einen Eintrag zur Liste hinzufügen – Backup **und** Recovery ziehen automatisch nach. Keine geteilte Datei, keine Code-Änderung.
+> Want to back up a new source? Add one entry to the list – backup **and** recovery follow automatically. No shared file, no code change.
 
 ---
 
 ## Installation
 
-### 1. Repository hinzufügen
+### 1. Add the repository
 
-In Home Assistant: **Einstellungen → Add-ons → Add-on Store → ⋮ (oben rechts) → Repositories**
+In Home Assistant: **Settings → Add-ons → Add-on Store → ⋮ (top right) → Repositories**
 
 ```
 https://github.com/XtraLarge/ha-offsite-backup
 ```
 
-### 2. Add-ons installieren
+### 2. Install the add-ons
 
-Im Store erscheinen zwei Add-ons:
-- **Offsite Backup** – zuerst installieren und konfigurieren
-- **BackupPC Recovery** – installieren, aber **nicht** manuell starten (das Dashboard übernimmt das)
+Two add-ons appear in the store:
+- **Offsite Backup** – install and configure this first
+- **BackupPC Recovery** – install it, but do **not** start it manually (the dashboard handles that)
 
-### 3. SSH-Schlüssel vorbereiten (einmalig)
+### 3. Prepare SSH keys (once)
 
-Du brauchst zwei Ed25519-Schlüsselpaare:
+You need two Ed25519 key pairs:
 
 ```bash
-ssh-keygen -t ed25519 -f storage_key  -C "ha-offsite-storage"   # Storage-Host
-ssh-keygen -t ed25519 -f offsite_key  -C "ha-offsite-target"    # Offsite-Ziel
+ssh-keygen -t ed25519 -f storage_key  -C "ha-offsite-storage"   # storage host
+ssh-keygen -t ed25519 -f offsite_key  -C "ha-offsite-target"    # offsite target
 ```
 
-**Public Key des Storage-Keys** auf dem Storage-Host in `/root/.ssh/authorized_keys` eintragen – mit `command=`-Einschränkung, damit über diesen Schlüssel **nur** das Backup-Skript läuft, keine interaktive Shell:
+Add the **public part of the storage key** to `/root/.ssh/authorized_keys` on the storage host – with a `command=` restriction so that this key can **only** run the backup script, never an interactive shell:
 
 ```
 command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAA... ha-offsite-storage
 ```
 
-**Public Key des Offsite-Keys** beim Offsite-Anbieter (z. B. Storage-Box-Verwaltung) hinterlegen.
+Register the **public part of the offsite key** with your offsite provider (e.g. the storage-box management panel).
 
-### 4. Add-on konfigurieren
+### 4. Configure the add-on
 
-Im **Offsite Backup** Add-on unter **Konfiguration**:
+In the **Offsite Backup** add-on under **Configuration**:
 
-| Feld | Beschreibung |
-|------|--------------|
-| `zfs_storage_host` | Hostname/IP des Storage-Hosts mit dem ZFS-Pool |
-| `zfs_storage_user` | SSH-Benutzer dort (Standard `root`) |
-| `offsite_user` / `offsite_host` / `offsite_port` | Zugang zum Offsite-Ziel (Storage-Box-Port ist oft 23) |
-| `offsite_box_id` | Numerische ID des Offsite-Ziels (für API-Snapshots) |
-| `offsite_token` | API-Token des Offsite-Anbieters |
-| `offsite_path` | Wurzelpfad am Offsite-Ziel (Standard `/home`) |
-| `backup_schedule` | Cron-Ausdruck – **Container läuft in UTC** (z. B. `0 18 * * 3` = Mi 20:00 CEST) |
-| `ssh_key_storage` / `ssh_key_offsite` | Die beiden privaten Schlüssel (als `password`-Feld) |
-| `backup_sources` | Liste der Quellen (siehe oben) – kommt mit sinnvollen Defaults |
-| `mqtt_*`, `loki_url` | Optional: HA-Sensoren bzw. Remote-Logging |
+| Field | Description |
+|-------|-------------|
+| `zfs_storage_host` | Hostname/IP of the storage host with the ZFS pool |
+| `zfs_storage_user` | SSH user there (default `root`) |
+| `offsite_user` / `offsite_host` / `offsite_port` | Access to the offsite target (storage-box port is often 23) |
+| `offsite_box_id` | Numeric ID of the offsite target (for API snapshots) |
+| `offsite_token` | API token of the offsite provider |
+| `offsite_path` | Root path on the offsite target (default `/home`) |
+| `backup_schedule` | Cron expression – **the container runs in UTC** (e.g. `0 18 * * 3` = Wed 20:00 CEST) |
+| `ssh_key_storage` / `ssh_key_offsite` | The two private keys (as `password` fields) |
+| `backup_sources` | List of sources (see above) – ships with sensible defaults |
+| `mqtt_*`, `loki_url` | Optional: HA sensors / remote logging |
 
-> SSH-Keys können mehrzeilig (mit Enter) oder einzeilig mit `\n`-Trennzeichen eingegeben werden. Sie werden als `password`-Felder gespeichert und tauchen nicht im Log oder in der Dashboard-API auf.
+> SSH keys can be entered multi-line (with Enter) or single-line with `\n` separators. They are stored as `password` fields and never appear in the log or the dashboard API.
 
-### 5. Starten
+### 5. Start
 
-Das **Offsite Backup** Add-on starten. Den ersten Lauf kannst du im Dashboard mit **„Backup jetzt starten"** auslösen und im Live-Log mitverfolgen. Die Recovery-Umgebung steuerst du komplett über das Dashboard.
+Start the **Offsite Backup** add-on. You can trigger the first run in the dashboard with **"Start backup now"** and follow it in the live log. The recovery environment is controlled entirely through the dashboard.
 
 ---
 
-## Generisches Beispiel
+## Generic example
 
-Angenommen, dein Setup sieht so aus:
+Suppose your setup looks like this:
 
-- **Storage-Host:** `nas.example.local`, ZFS-Pool `ZPool`, BackupPC-Daten unter `ZPool/BackupPC`
-- **Offsite-Ziel:** eine Storage Box `u123456.your-storagebox.de`, Port 23, ID `123456`, Wurzel `/home`
+- **Storage host:** `nas.example.local`, ZFS pool `ZPool`, BackupPC data under `ZPool/BackupPC`
+- **Offsite target:** a storage box `u123456.your-storagebox.de`, port 23, ID `123456`, root `/home`
 
-**Schritt 1 – Schlüssel auf dem NAS eintragen** (`nas.example.local`, als root):
+**Step 1 – register the key on the NAS** (`nas.example.local`, as root):
 
 ```
 command="bash -s",no-pty,no-port-forwarding,no-X11-forwarding ssh-ed25519 AAAAC3Nz...storage ha-offsite-storage
 ```
 
-**Schritt 2 – Add-on-Konfiguration** (gekürzt):
+**Step 2 – add-on configuration** (abridged):
 
 ```yaml
 zfs_storage_host: "nas.example.local"
@@ -152,9 +154,9 @@ offsite_host: "u123456.your-storagebox.de"
 offsite_port: 23
 offsite_box_id: 123456
 offsite_path: "/home"
-backup_schedule: "0 18 * * 3"        # Mittwoch 20:00 CEST (18:00 UTC)
+backup_schedule: "0 18 * * 3"        # Wednesday 20:00 CEST (18:00 UTC)
 backup_sources:
-  - dest: "ZPool/BackupPC"           # → /home/ZPool/BackupPC am Ziel
+  - dest: "ZPool/BackupPC"           # → /home/ZPool/BackupPC on the target
     dataset: "ZPool/BackupPC"
     snapshot: true
     parallel: true
@@ -167,36 +169,36 @@ backup_sources:
     recovery_clean: true
 ```
 
-**Ergebnis:** Jeden Mittwoch 20:00 zieht das Add-on einen Snapshot von `ZPool/BackupPC`, überträgt ihn (parallel in Shards) nach `/home/ZPool/BackupPC` auf der Storage Box, kopiert die BackupPC-Config dazu und legt am Ende einen `Snap_2026-…`-Snapshot an. Fällt das NAS aus, startest du im Dashboard die Recovery, wählst Live oder einen Snapshot, und arbeitest direkt in der BackupPC-Oberfläche.
+**Result:** every Wednesday at 20:00 the add-on takes a snapshot of `ZPool/BackupPC`, transfers it (in parallel shards) to `/home/ZPool/BackupPC` on the storage box, copies the BackupPC config alongside it, and finally creates a `Snap_2026-…` snapshot. If the NAS fails, you start recovery from the dashboard, choose live or a snapshot, and work directly in the BackupPC interface.
 
 ---
 
-## Sicherheitshinweise
+## Security notes
 
-- Alle Schlüssel und Tokens sind `password`-Felder – nicht im Log, nicht in der Dashboard-API (`/api/options` blendet sensible Felder aus).
-- Der Offsite-Key verlässt das Add-on **nur per Agent-Forwarding** und wird nie auf den Storage-Host kopiert.
-- Die Storage-Host-Verbindung ist per `command="bash -s"` auf das Backup-Skript beschränkt – keine interaktive Shell über diesen Schlüssel.
-- Die Recovery mountet das Offsite-Ziel **read-only**, um laufende Übertragungen nicht zu stören.
-- `AppArmor` ist deaktiviert und `SYS_ADMIN` gesetzt – ausschließlich für SSHFS (FUSE) in der Recovery nötig.
-
----
-
-## Danksagung
-
-Dieses Projekt steht auf den Schultern von zwei großartigen Open-Source-Arbeiten – und ich möchte mich bei den Menschen dahinter ganz herzlich bedanken:
-
-- **[BackupPC](https://backuppc.github.io/backuppc/)** von **Craig Barratt** – die geniale, über viele Jahre gereifte Backup-Engine, die das ganze Konzept der deduplizierten Pool-Sicherungen erst möglich macht. Ohne dieses Fundament gäbe es hier nichts wiederherzustellen.
-- **[adferrand/docker-backuppc](https://github.com/adferrand/docker-backuppc)** von **Adrien Ferrand** – das wunderbar gepflegte BackupPC-Docker-Image (`adferrand/backuppc`), das die Recovery-Umgebung direkt nutzt. Es hat mir unzählige Stunden Bastelarbeit erspart und war die Inspiration, das Ganze überhaupt in Home Assistant zu bringen.
-
-Vielen Dank für eure Arbeit – sie wird hier täglich produktiv eingesetzt und hat mir mein Backup-Setup massiv erleichtert. Dieses Add-on-Paar ist mein Versuch, auf eurer Arbeit aufzubauen und sie mit einem komfortablen Offsite-Workflow zu ergänzen. Entwickelt habe ich es gemeinsam mit **[Claude](https://www.anthropic.com/claude)** (Anthropic) als Pair-Programming-Partner.
+- All keys and tokens are `password` fields – not in the log, not in the dashboard API (`/api/options` hides sensitive fields).
+- The offsite key leaves the add-on **only via agent forwarding** and is never copied to the storage host.
+- The storage-host connection is restricted to the backup script via `command="bash -s"` – no interactive shell through this key.
+- Recovery mounts the offsite target **read-only** so it cannot disturb ongoing transfers.
+- `AppArmor` is disabled and `SYS_ADMIN` is set – needed exclusively for SSHFS (FUSE) in recovery.
 
 ---
 
-## Weiterführende Dokumentation
+## Acknowledgements
 
-- [Offsite Backup – DOCS.md](offsite-backup/DOCS.md) – Konfiguration, Dashboard, Backup-Ablauf, Troubleshooting
-- [BackupPC Recovery – DOCS.md](backuppc-recovery/DOCS.md) – Recovery-Umgebung, Startvorgang, technische Details
+This project stands on the shoulders of two wonderful pieces of open-source work – and I want to thank the people behind them from the bottom of my heart:
 
-## Lizenz
+- **[BackupPC](https://backuppc.github.io/backuppc/)** by **Craig Barratt** – the brilliant, decades-matured backup engine that makes the whole concept of deduplicated pool backups possible in the first place. Without this foundation there would be nothing here to restore.
+- **[adferrand/docker-backuppc](https://github.com/adferrand/docker-backuppc)** by **Adrien Ferrand** – the beautifully maintained BackupPC Docker image (`adferrand/backuppc`) that the recovery environment uses directly. It saved me countless hours of tinkering and was the very inspiration to bring all of this into Home Assistant.
 
-MIT – siehe Add-on-Labels. BackupPC und das adferrand-Image stehen unter ihren jeweiligen eigenen Lizenzen.
+Thank you for your work – it runs in production here every single day and has made my backup setup so much easier. This add-on pair is my attempt to build on your work and complement it with a comfortable offsite workflow. I developed it together with **[Claude](https://www.anthropic.com/claude)** (Anthropic) as my pair-programming partner.
+
+---
+
+## Further documentation
+
+- [Offsite Backup – DOCS.md](offsite-backup/DOCS.md) – configuration, dashboard, backup flow, troubleshooting
+- [BackupPC Recovery – DOCS.md](backuppc-recovery/DOCS.md) – recovery environment, startup sequence, technical details
+
+## License
+
+MIT – see the add-on labels. BackupPC and the adferrand image are under their own respective licenses.
