@@ -30,7 +30,11 @@ SECRET_MARKERS=(
   SECRET_TOKEN_SHOULD_NOT_APPEAR
 )
 
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$DATADIR"; }
+# /data wird vom Container als root beschrieben → Cleanup braucht sudo.
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  sudo rm -rf "$DATADIR" 2>/dev/null || rm -rf "$DATADIR" 2>/dev/null || true
+}
 trap cleanup EXIT
 
 fail() { echo "FEHLGESCHLAGEN: $*" >&2; docker logs "$CONTAINER" 2>&1 | tail -40 >&2 || true; exit 1; }
@@ -74,14 +78,16 @@ cp "$FIXTURE" "$DATADIR/options.json"
 
 boot_and_check "$OLD_IMAGE" "ALT (vorheriges Release)"
 
-# Markerdatei in /data: muss den Upgrade überleben
-echo "upgrade-marker-$$" > "$DATADIR/logs/upgrade_marker.txt" 2>/dev/null \
-  || { mkdir -p "$DATADIR/logs"; echo "upgrade-marker-$$" > "$DATADIR/logs/upgrade_marker.txt"; }
+# Marker per root (im Container) ins /data schreiben — der ALT-Container
+# erzeugt ihn, der NEU-Container muss ihn auf demselben Volume wiederfinden.
+MARKER="upgrade-marker-$RANDOM$RANDOM"
+docker exec "$CONTAINER" sh -c "echo '$MARKER' > /data/upgrade_marker.txt" \
+  || fail "Marker konnte im ALT-Container nicht geschrieben werden"
 
 boot_and_check "$NEW_IMAGE" "NEU (Kandidat)"
 
-[ -f "$DATADIR/logs/upgrade_marker.txt" ] \
-  || fail "Markerdatei in /data nach Upgrade verschwunden"
+docker exec "$CONTAINER" cat /data/upgrade_marker.txt 2>/dev/null | grep -q "$MARKER" \
+  || fail "Vom ALT-Container in /data geschriebener Marker im NEU-Container nicht auffindbar"
 
 echo
 echo "OK: Upgrade alt→neu erfolgreich — Boot, /data-Persistenz und Secret-Hiding bestätigt."
