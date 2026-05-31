@@ -31,3 +31,20 @@ jobs:
         with:
           scandir: ./offsite-backup/scripts
           severity: warning
+
+  schema-migration:
+    name: Schema-Migration-Guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Tags & History für den Baseline-Vergleich
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Check schema migration
+        run: python3 tests/check_schema_migration.py --git
