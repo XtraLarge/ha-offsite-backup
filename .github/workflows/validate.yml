@@ -48,3 +48,32 @@ jobs:
         run: pip install pyyaml
       - name: Check schema migration
         run: python3 tests/check_schema_migration.py --git
+
+  upgrade-boot-test:
+    name: Upgrade-/Boot-Test (Offsite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # Tags & History für das Baseline-Image
+      - name: Determine previous release tag
+        id: base
+        run: |
+          tag=$(git tag --list 'offsite-v*' --sort=-version:refname | head -1)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          [ -n "$tag" ] && echo "Baseline-Tag: $tag" || echo "Kein offsite-v* Tag — Test wird übersprungen."
+      - name: Build candidate image
+        if: steps.base.outputs.tag != ''
+        run: |
+          docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm \
+            -t offsite:new offsite-backup
+      - name: Build previous release image
+        if: steps.base.outputs.tag != ''
+        run: |
+          git worktree add /tmp/old-release "${{ steps.base.outputs.tag }}"
+          docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base-debian:bookworm \
+            -t offsite:old /tmp/old-release/offsite-backup
+      - name: Run upgrade/boot test
+        if: steps.base.outputs.tag != ''
+        run: bash tests/upgrade_boot_test.sh offsite:old offsite:new

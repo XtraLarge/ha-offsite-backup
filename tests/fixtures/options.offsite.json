@@ -1,0 +1,33 @@
+{
+  "zfs_storage_host": "nas.invalid",
+  "zfs_storage_user": "root",
+  "offsite_user": "SECRET_USER_SHOULD_NOT_APPEAR",
+  "offsite_host": "SECRET_HOST_SHOULD_NOT_APPEAR",
+  "offsite_port": 23,
+  "offsite_box_id": 999999,
+  "backup_schedule": "0 20 * * 3",
+  "loki_url": "",
+  "mqtt_discovery": false,
+  "mqtt_host": "",
+  "mqtt_port": 1883,
+  "mqtt_user": "",
+  "mqtt_password": "SECRET_MQTT_SHOULD_NOT_APPEAR",
+  "ssh_key_storage": "SECRET_KEY_SHOULD_NOT_APPEAR",
+  "ssh_key_offsite": "SECRET_KEY_SHOULD_NOT_APPEAR",
+  "offsite_token": "SECRET_TOKEN_SHOULD_NOT_APPEAR",
+  "backuppc_port": 8080,
+  "offsite_path": "/home",
+  "snapshot_prefix": "pre_rsync",
+  "backup_sources": [
+    {
+      "dest": "ZPool/BackupPC",
+      "dataset": "ZPool/BackupPC",
+      "path": "",
+      "snapshot": true,
+      "parallel": true,
+      "recovery": "topdir",
+      "container_mount": "/data/backuppc",
+      "recovery_clean": false
+    }
+  ]
+}
