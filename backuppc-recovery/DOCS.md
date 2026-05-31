@@ -1,173 +1,175 @@
-# BackupPC Recovery – Dokumentation
+# BackupPC Recovery – Documentation
 
-## Übersicht
+**English** | [Deutsch](DOCS.de.md)
 
-Das BackupPC Recovery Add-on startet eine vollständige **BackupPC4-Umgebung** direkt auf Home Assistant. Es greift per SSHFS auf die Hetzner Storage Box zu und macht alle Sicherungen über die gewohnte BackupPC-Weboberfläche zugänglich.
+## Overview
 
-**Wichtig:** Dieses Add-on ist **nur bei Bedarf zu starten** – typischerweise nach einem NAS-Ausfall, zur Dateiwiederherstellung oder zur Sicherungsüberprüfung. Im normalen Betrieb läuft es nicht.
+The BackupPC Recovery add-on starts a full **BackupPC4 environment** directly on Home Assistant. It accesses the offsite storage box via SSHFS and makes all backups available through the familiar BackupPC web interface.
 
-**Keine neuen Sicherungen:** `BackupsDisable=2` ist immer gesetzt – es werden keine automatischen Backups gestartet.
+**Important:** this add-on is **only meant to be started when needed** – typically after a NAS failure, to restore files, or to verify backups. It does not run during normal operation.
 
----
-
-## Steuerung
-
-### Über das Offsite Backup Dashboard (empfohlen)
-
-Das **Offsite Backup** Add-on startet und stoppt dieses Add-on automatisch:
-
-1. Im Offsite Backup Dashboard die **Datenquelle** wählen:
-   - **Live-Daten (aktuell):** Aktueller Stand der Storage Box
-   - **Snapshot auswählen:** Älterer Zeitpunkt (Dropdown mit allen Hetzner-Snapshots)
-
-2. **BackupPC starten** klicken – das Add-on konfiguriert sich automatisch mit den Hetzner-Zugangsdaten aus dem Offsite Backup Add-on
-
-3. Warten bis der Status auf "läuft" wechselt (ca. 30–60 Sekunden)
-
-4. **BackupPC UI öffnen** – Button erscheint automatisch wenn das Add-on läuft
-
-5. Nach der Recovery: **BackupPC beenden** klicken
-
-### Manuell (ohne Offsite Backup Add-on)
-
-Das Add-on kann auch eigenständig konfiguriert und gestartet werden. Alle Felder in der HA-Konfiguration eintragen (siehe unten).
+**No new backups:** `BackupsDisable=2` is always set – no automatic backups are started.
 
 ---
 
-## Konfiguration
+## Control
 
-| Feld | Beschreibung | Beispiel |
-|------|-------------|---------|
-| `offsite_user` | Offsite Storage Box Benutzername | `u123456` |
-| `offsite_host` | Offsite Storage Box Hostname | `u123456.your-storagebox.de` |
-| `offsite_port` | SSH-Port (Standard: 23) | `23` |
-| `snapshot_name` | Snapshot-Name für Datenzugriff (leer = Live) | `Snap_YYYY-MM-DD` |
-| `ssh_key_offsite` | Privater SSH-Key für Offsite Storage Box | (mehrzeilig) |
-| `mqtt_host` | MQTT-Broker (optional) | `192.168.1.10` |
-| `mqtt_port` | MQTT-Port | `1883` |
-| `mqtt_user` | MQTT-Benutzer | |
-| `mqtt_password` | MQTT-Passwort | |
+### Via the Offsite Backup dashboard (recommended)
 
-> Wenn das Add-on über das Offsite Backup Dashboard gestartet wird, werden `offsite_user`, `offsite_host`, `offsite_port`, `snapshot_name`, `ssh_key_offsite` und MQTT-Daten automatisch übertragen – kein manuelles Eintragen nötig.
+The **Offsite Backup** add-on starts and stops this add-on automatically:
+
+1. In the Offsite Backup dashboard, choose the **data source**:
+   - **Live data (current):** the current state of the storage box
+   - **Select a snapshot:** an earlier point in time (dropdown with all storage-box snapshots)
+
+2. Click **Start BackupPC** – the add-on configures itself automatically with the offsite credentials from the Offsite Backup add-on
+
+3. Wait until the status switches to "running" (about 30–60 seconds)
+
+4. **Open BackupPC UI** – the button appears automatically once the add-on is running
+
+5. After recovery: click **Stop BackupPC**
+
+### Manually (without the Offsite Backup add-on)
+
+The add-on can also be configured and started on its own. Enter all fields in the HA configuration (see below).
 
 ---
 
-## Web-UI
+## Configuration
 
-Nach dem Start ist die BackupPC-Oberfläche erreichbar unter:
+| Field | Description | Example |
+|-------|-------------|---------|
+| `offsite_user` | Offsite storage-box username | `u123456` |
+| `offsite_host` | Offsite storage-box hostname | `u123456.your-storagebox.de` |
+| `offsite_port` | SSH port (default: 23) | `23` |
+| `snapshot_name` | Snapshot name for data access (empty = live) | `Snap_YYYY-MM-DD` |
+| `ssh_key_offsite` | Private SSH key for the offsite storage box | (multi-line) |
+| `mqtt_host` | MQTT broker (optional) | `192.168.1.10` |
+| `mqtt_port` | MQTT port | `1883` |
+| `mqtt_user` | MQTT user | |
+| `mqtt_password` | MQTT password | |
+
+> When the add-on is started via the Offsite Backup dashboard, `offsite_user`, `offsite_host`, `offsite_port`, `snapshot_name`, `ssh_key_offsite` and the MQTT data are transferred automatically – no manual entry needed.
+
+---
+
+## Web UI
+
+After startup the BackupPC interface is reachable at:
 
 ```
 http://<HA-IP>:8080/BackupPC_Admin
 ```
 
-Oder über den **"BackupPC UI öffnen"**-Button im Offsite Backup Dashboard.
+Or via the **"Open BackupPC UI"** button in the Offsite Backup dashboard.
 
-- **Port:** 8080 (nicht über HA-Ingress – direkter Zugriff)
-- **Kein Login nötig:** `REMOTE_USER=backuppc` ist automatisch gesetzt
-- **Read-only-Modus:** Keine neuen Sicherungen werden gestartet
-
----
-
-## Startvorgang
-
-Beim Start des Add-ons passiert folgendes:
-
-1. **Benutzer anlegen:** `backuppc` (UID/GID 1000) wird erstellt
-2. **BackupPC einrichten** (nur beim ersten Start): `configure.pl` läuft gegen `/data/backuppc` (lokal, nicht SSHFS – vermeidet `chown`-Probleme)
-3. **SSH-Key schreiben:** `ssh_key_offsite` wird nach `/data/secrets/id_ed25519_offsite` geschrieben
-4. **SSHFS mounten:** `<offsite_user>@<offsite_host>:/home/.snapshots/<snapshot>/ZPool` oder `/home/ZPool` (Live)
-5. **BackupPC-Config importieren** (einmalig pro Snapshot): Config wird von `<mount>/Docker/backuppc/config/` nach `/etc/backuppc/` kopiert
-6. **TopDir setzen:** `$Conf{TopDir}` wird auf `<sshfs-mount>/BackupPC` gesetzt
-7. **lighttpd + BackupPC** via supervisord starten
-
-Der Config-Import passiert **einmalig** pro Snapshot (erkannt per Flag-Datei). Bei Snapshot-Wechsel wird neu importiert.
+- **Port:** 8080 (not via HA ingress – direct access)
+- **No login needed:** `REMOTE_USER=backuppc` is set automatically
+- **Read-only mode:** no new backups are started
 
 ---
 
-## MQTT-Status
+## Startup sequence
 
-Bei konfiguriertem MQTT werden folgende Entitäten publiziert:
+On add-on startup the following happens:
 
-| Entität | Typ | Beschreibung |
-|---------|-----|-------------|
-| `binary_sensor.backuppc_lauft` | Binary-Sensor | Add-on gestartet/gestoppt |
-| `sensor.backuppc_url` | Sensor | URL der Web-UI |
-| `sensor.backuppc_datenquelle` | Sensor | `Live` oder Snapshot-Name |
+1. **Create user:** `backuppc` (UID/GID 1000) is created
+2. **Set up BackupPC** (first start only): `configure.pl` runs against `/data/backuppc` (local, not SSHFS – avoids `chown` issues)
+3. **Write SSH key:** `ssh_key_offsite` is written to `/data/secrets/id_ed25519_offsite`
+4. **Mount SSHFS:** `<offsite_user>@<offsite_host>:/home/.snapshots/<snapshot>/ZPool` or `/home/ZPool` (live)
+5. **Import BackupPC config** (once per snapshot): the config is copied from `<mount>/Docker/backuppc/config/` to `/etc/backuppc/`
+6. **Set TopDir:** `$Conf{TopDir}` is set to `<sshfs-mount>/BackupPC`
+7. **Start lighttpd + BackupPC** via supervisord
+
+The config import happens **once** per snapshot (detected via a flag file). When the snapshot changes, it is re-imported.
+
+---
+
+## MQTT status
+
+When MQTT is configured, the following entities are published:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| `binary_sensor.backuppc_lauft` | Binary sensor | Add-on started/stopped |
+| `sensor.backuppc_url` | Sensor | URL of the web UI |
+| `sensor.backuppc_datenquelle` | Sensor | `Live` or snapshot name |
 
 ---
 
 ## Troubleshooting
 
-### SSHFS-Mount fehlgeschlagen
+### SSHFS mount failed
 
 ```
-FEHLER: SSHFS-Mount fehlgeschlagen (rc=...)
+ERROR: SSHFS mount failed (rc=...)
 ```
 
-Ursachen und Prüfungen:
-- SSH-Key ungültig: Beginnt der Key mit `-----BEGIN OPENSSH PRIVATE KEY-----`?
-- Offsite-Host nicht erreichbar: `ping <offsite_host>` und Port 23 erreichbar?
-- Add-on hat `SYS_ADMIN`-Capability und `/dev/fuse` – läuft es als privileged?
+Causes and checks:
+- Invalid SSH key: does the key start with `-----BEGIN OPENSSH PRIVATE KEY-----`?
+- Offsite host unreachable: is `ping <offsite_host>` working and port 23 reachable?
+- Does the add-on have the `SYS_ADMIN` capability and `/dev/fuse` – is it running as privileged?
 
-### BackupPC startet nicht: `can't find command BackupPC`
+### BackupPC does not start: `can't find command BackupPC`
 
-Erste-Start-Einrichtung (`configure.pl`) ist fehlgeschlagen. Add-on-Log prüfen:
+The first-start setup (`configure.pl`) failed. Check the add-on log:
 ```
 HA → Add-ons → BackupPC Recovery → Log
 ```
 
-Lösung: Add-on stoppen, `/data/firstrun` (im Container) zurücksetzen und neu starten. Oder: Add-on deinstallieren und neu installieren (löscht `/data/`).
+Fix: stop the add-on, reset `/data/firstrun` (in the container) and restart. Or: uninstall and reinstall the add-on (this deletes `/data/`).
 
-### Web-UI zeigt leere Seite oder 404
+### Web UI shows a blank page or 404
 
-- URL prüfen: `http://<HA-IP>:8080/BackupPC_Admin` (nicht `/BackupPC/`)
-- Kurz warten – BackupPC braucht 30–60 Sekunden zum Starten
-- Add-on-Log auf Fehler prüfen
+- Check the URL: `http://<HA-IP>:8080/BackupPC_Admin` (not `/BackupPC/`)
+- Wait a moment – BackupPC needs 30–60 seconds to start
+- Check the add-on log for errors
 
-### Config-Import schlägt fehl
+### Config import fails
 
 ```
 cp: cannot overwrite non-directory ...
 ```
 
-Alter Config-Import-Konflikt. Flag-Datei löschen:
+An old config-import conflict. Delete the flag file:
 ```bash
-# Im SSH-Terminal auf HA:
+# In the SSH terminal on HA:
 rm /data/addon_configs/3e98a749_backuppc_recovery/config-imported-v2*
 ```
-Dann Add-on neu starten – Config wird neu importiert.
+Then restart the add-on – the config is re-imported.
 
-### lighttpd startet nicht: `Opening errorlog failed`
+### lighttpd does not start: `Opening errorlog failed`
 
 ```bash
 mkdir -p /var/log/lighttpd
 ```
-(Normalerweise durch `run.sh` automatisch erstellt – tritt nur bei beschädigtem `/data` auf)
+(Normally created automatically by `run.sh` – only occurs with a corrupted `/data`.)
 
 ---
 
-## Technische Details
+## Technical details
 
-**Basis-Image:** `adferrand/backuppc:4.4.0-12` (Alpine Linux + lighttpd + supervisord)
+**Base image:** `adferrand/backuppc:4.4.0-12` (Alpine Linux + lighttpd + supervisord)
 
-**Prozessmanagement via supervisord:**
+**Process management via supervisord:**
 - `backuppc`: `/usr/local/BackupPC/bin/BackupPC`
 - `lighttpd`: `/usr/sbin/lighttpd`
-- `watchmails`: Überwacht msmtp-Maillog
+- `watchmails`: watches the msmtp mail log
 
-**Auth-Bypass für Recovery:**
-lighttpd `auth.conf` wird ersetzt durch:
+**Auth bypass for recovery:**
+the lighttpd `auth.conf` is replaced with:
 ```nginx
 setenv.add-environment = ("REMOTE_USER" => "backuppc")
 ```
-Kein Passwort nötig – das Add-on ist nur im lokalen Netz erreichbar (Port 8080 nicht über HA-Ingress).
+No password needed – the add-on is only reachable on the local network (port 8080 not via HA ingress).
 
-**Datenverzeichnisse im Container:**
-| Pfad | Inhalt |
-|------|--------|
-| `/mnt/hetzner` | SSHFS-Mount der Hetzner Storage Box |
-| `/mnt/hetzner/BackupPC` | BackupPC-Datenbasis (TopDir) |
-| `/etc/backuppc` | BackupPC-Konfiguration (von Hetzner importiert) |
-| `/data/backuppc` | BackupPC-Laufzeitdaten (lokal, persistent) |
-| `/data/secrets` | SSH-Keys |
-| `/usr/local/BackupPC` | BackupPC4-Installation |
+**Data directories in the container:**
+| Path | Content |
+|------|---------|
+| `/mnt/hetzner` | SSHFS mount of the offsite storage box |
+| `/mnt/hetzner/BackupPC` | BackupPC data base (TopDir) |
+| `/etc/backuppc` | BackupPC configuration (imported from offsite) |
+| `/data/backuppc` | BackupPC runtime data (local, persistent) |
+| `/data/secrets` | SSH keys |
+| `/usr/local/BackupPC` | BackupPC4 installation |
