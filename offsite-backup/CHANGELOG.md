@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0 - 2026-06-12
+
+### Neu
+- **Hänger-Erkennung + Auto-Resume.** Der Lauf-Status wird nicht mehr an der
+  bloßen Existenz der NAS-`screen`-Session festgemacht (ein toter/idle screen ohne
+  RunDir wurde sonst dauerhaft als „läuft" gemeldet), sondern an einer
+  Zustandssonde aus `screen` + Prozess + RunDir + `exit_code` + `run.log`-Alter.
+  Zustände: `running | stalled | crashed | finished | idle`.
+- Hängt oder crasht ein Lauf, wird aufgeräumt (screen/Prozesse beendet, verwaiste
+  `pre_rsync`-Snapshots gelöscht, RunDir entfernt) und nach Backoff (30 min)
+  **automatisch wiederaufgenommen** — bis zu 3 Versuche.
+- **Manueller Abbruch ≠ Crash:** „Abbrechen" setzt einen Marker
+  (`/data/aborted-by-user`) → **keine** automatische Wiederaufnahme. Nur Crash/
+  Hänger lösen Resume aus.
+- Neue Option `auto_resume_backup` (Default `true`) zum globalen Abschalten der
+  automatischen Wiederaufnahme.
+- Dashboard-Fortschritt zeigt den neuen Zustand: „Hängt – Wiederaufnahme in
+  ~N min (Versuch x/3)".
+
 ## 1.3.4 - 2026-05-30
 
 ### Behoben

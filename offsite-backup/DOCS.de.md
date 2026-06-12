@@ -178,6 +178,17 @@ Bei konfiguriertem MQTT werden folgende Entitäten als Auto-Discovery publiziert
 
 ## 6. Troubleshooting
 
+### Dashboard zeigt „läuft", aber kein Fortschritt (Hänger)
+Seit 1.4.0 erkennt das Add-on das selbst: Der Lauf-Status wird aus einer
+Zustandssonde (screen + Prozess + RunDir + `exit_code` + `run.log`-Alter)
+bestimmt, nicht mehr aus der bloßen `screen`-Existenz. Ein erkannter Hänger
+(`stalled`/`crashed`) wird automatisch aufgeräumt (screen/Prozesse beendet,
+verwaiste `pre_rsync`-Snapshots gelöscht, RunDir entfernt) und nach 30 min
+**bis zu 3-mal automatisch wiederaufgenommen**. Der Fortschritt zeigt dann
+„Hängt – Wiederaufnahme in ~N min (Versuch x/3)". Ein **manueller** Abbrechen-
+Klick setzt den Marker `/data/aborted-by-user` und unterdrückt die Wiederaufnahme.
+Global abschaltbar über die Option `auto_resume_backup: false`.
+
 ### Backup schlägt fehl: `error in libcrypto`
 SSH-Key ist beschädigt. Schlüssel neu generieren und in der HA-Konfiguration eintragen.
 

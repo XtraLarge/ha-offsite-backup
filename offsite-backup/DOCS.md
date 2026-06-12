@@ -178,6 +178,16 @@ When MQTT is configured, the following entities are published via auto-discovery
 
 ## 6. Troubleshooting
 
+### Dashboard shows "running" but no progress (stall)
+Since 1.4.0 the add-on detects this itself: the run state is derived from a probe
+(screen + process + run dir + `exit_code` + `run.log` age), no longer from the
+mere existence of the `screen` session. A detected stall (`stalled`/`crashed`) is
+cleaned up automatically (screen/processes killed, orphaned `pre_rsync` snapshots
+destroyed, run dir removed) and **auto-resumed up to 3 times** after a 30 min
+backoff. Progress then shows "Hängt – Wiederaufnahme in ~N min (Versuch x/3)". A
+**manual** abort click writes the marker `/data/aborted-by-user` and suppresses
+resume. Disable globally via the option `auto_resume_backup: false`.
+
 ### Backup fails: `error in libcrypto`
 The SSH key is corrupted. Regenerate the key and enter it in the HA configuration.
 
