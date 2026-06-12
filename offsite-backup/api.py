@@ -22,6 +22,11 @@ SECRETS_DIR = "/data/secrets"
 NAS_KEY = SECRETS_DIR + "/id_ed25519_storage"
 SCREEN_NAME = "offsite-backup"
 REMOTE_RUNDIR = "/dev/shm/offsite-backup"
+ABORT_MARKER = "/data/aborted-by-user"   # manueller Abbruch → kein Auto-Resume
+# Watchdog / Auto-Resume
+STALL_SECS = 1800           # run.log seit >30 min ohne Aktivität → hängend
+RESUME_BACKOFF_SECS = 1800  # Wartezeit vor automatischer Wiederaufnahme (30 min)
+MAX_RESUME_ATTEMPTS = 3     # danach aufgeben (kein Endlos-Resume)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
@@ -158,23 +163,66 @@ def _nas_ssh(remote_cmd, timeout=12):
         return None
 
 
-_screen_cache = {"ts": 0.0, "running": False}
+# Robuste Lauf-Erkennung: NICHT „screen existiert" (ein toter/idle screen ohne
+# RunDir las sich früher für immer als „läuft"), sondern eine NAS-Zustandssonde
+# aus screen + Prozess + RunDir + exit_code + run.log-Alter.
+_STATE_SNIPPET = f"""s=0; p=0; d=0
+screen -ls 2>/dev/null | grep -q {SCREEN_NAME} && s=1
+pgrep -f '{REMOTE_RUNDIR}/backup_nas.sh' >/dev/null 2>&1 && p=1
+[ -d "{REMOTE_RUNDIR}" ] && d=1
+ec=$(cat "{REMOTE_RUNDIR}/exit_code" 2>/dev/null)
+age=-1
+[ -f "{REMOTE_RUNDIR}/run.log" ] && age=$(( $(date +%s) - $(stat -c %Y "{REMOTE_RUNDIR}/run.log") ))
+printf 'screen=%s proc=%s rundir=%s exit=%s age=%s\\n' "$s" "$p" "$d" "$ec" "$age"
+"""
+
+_state_cache = {"ts": 0.0, "val": None}
+
+
+def _classify_state(st):
+    if st["exit"] is not None:
+        return "finished"               # exit_code geschrieben → finalisieren
+    if st["screen"] or st["proc"]:
+        if st["rundir"] and 0 <= st["age"] <= STALL_SECS:
+            return "running"            # echte, frische Aktivität
+        return "stalled"                # screen lebt, aber RunDir weg / kein Fortschritt
+    if st["rundir"]:
+        return "crashed"                # Prozess tot, RunDir ohne exit_code zurück
+    return "idle"
+
+
+def _nas_backup_state(force=False):
+    """Eine kurz gecachte SSH-Sonde des NAS-Laufs, klassifiziert als
+    idle | running | stalled | crashed | finished | unknown."""
+    now = time.time()
+    if not force and _state_cache["val"] is not None and now - _state_cache["ts"] < 8:
+        return _state_cache["val"]
+    r = _nas_ssh(_STATE_SNIPPET)
+    if r is None or r.returncode != 0 or not (r.stdout or "").strip():
+        # NAS nicht erreichbar → Lock-Datei als grobe (konservative) Rückfallebene.
+        cls = "running" if os.path.exists(BACKUP_LOCK) else "unknown"
+        st = {"class": cls, "screen": False, "proc": False, "rundir": False,
+              "exit": None, "age": -1, "reachable": False}
+        _state_cache.update(ts=now, val=st)
+        return st
+    kv = dict(tok.split("=", 1) for tok in r.stdout.strip().splitlines()[-1].split())
+    st = {
+        "screen": kv.get("screen") == "1",
+        "proc": kv.get("proc") == "1",
+        "rundir": kv.get("rundir") == "1",
+        "exit": (kv.get("exit") or "").strip() or None,
+        "age": int(kv.get("age", "-1") or -1),
+        "reachable": True,
+    }
+    st["class"] = _classify_state(st)
+    _state_cache.update(ts=now, val=st)
+    return st
 
 
 def is_backup_running():
-    """Quelle der Wahrheit ist die screen-Session auf der NAS. Ergebnis wird
-    kurz gecacht, damit Status-Polls die NAS nicht überfluten. Ist die NAS nicht
-    erreichbar, dient die lokale Lock-Datei als Rückfallebene."""
-    now = time.time()
-    if now - _screen_cache["ts"] < 8:
-        return _screen_cache["running"]
-    r = _nas_ssh(f"screen -ls 2>/dev/null | grep -q {SCREEN_NAME} && echo RUN || echo IDLE")
-    if r is None:
-        running = os.path.exists(BACKUP_LOCK)
-    else:
-        running = "RUN" in (r.stdout or "")
-    _screen_cache.update(ts=now, running=running)
-    return running
+    """True, solange der Slot belegt ist (läuft/hängt/wird-abgeschlossen) — damit
+    kein zweiter Lauf darüberstartet. crashed/idle/unknown gelten als frei."""
+    return _nas_backup_state()["class"] in ("running", "stalled", "finished")
 
 
 def _supervisor_request(method, path, body=None):
@@ -248,8 +296,22 @@ _progress_cache = {"ts": 0.0, "val": "Bereit"}
 
 
 def get_progress():
-    if not is_backup_running():
+    cls = _nas_backup_state()["class"]
+    if cls in ("idle", "unknown"):
         return "Bereit"
+    if cls == "finished":
+        return "Wird abgeschlossen"
+    if cls in ("stalled", "crashed"):
+        if os.path.exists(ABORT_MARKER):
+            return "Abgebrochen"
+        if _resume["next_at"] < 0:
+            return f"Hängt – nach {MAX_RESUME_ATTEMPTS} Versuchen aufgegeben (bitte prüfen)"
+        if _resume["next_at"] > 0:
+            mins = max(0, int((_resume["next_at"] - time.time()) / 60))
+            return (f"Hängt – Wiederaufnahme in ~{mins} min "
+                    f"(Versuch {_resume['attempts'] + 1}/{MAX_RESUME_ATTEMPTS})")
+        return "Hänger erkannt – wird aufgeräumt"
+    # cls == "running"
     now = time.time()
     if now - _progress_cache["ts"] < 8:
         return _progress_cache["val"]
@@ -286,27 +348,62 @@ def _compute_progress():
 
 _backup_proc = None
 _backup_started_at = None
+# Auto-Resume-Zustand: attempts = bisherige Wiederaufnahmen,
+# next_at = Unix-Zeit der nächsten Wiederaufnahme (0 = keine geplant, <0 = aufgegeben).
+_resume = {"attempts": 0, "next_at": 0.0}
 
 
-def trigger_backup():
-    if is_backup_running():
+def _clear_abort_marker():
+    try:
+        os.unlink(ABORT_MARKER)
+    except OSError:
+        pass
+
+
+def _cleanup_nas_run():
+    """Beendet screen + verwaiste Offsite-Prozesse, gibt den Snapshot-Mount frei,
+    löscht verwaiste pre_rsync-Snapshots (entkoppelt – zfs destroy kann blockieren)
+    und räumt das RunDir. Gemeinsam genutzt von Abbruch und Crash-Recovery."""
+    _nas_ssh(
+        f"screen -S {SCREEN_NAME} -X quit 2>/dev/null; "
+        f"pkill -f '{REMOTE_RUNDIR}/backup_nas.sh' 2>/dev/null; "
+        f"pkill -f '{REMOTE_RUNDIR}/nas_bootstrap.sh' 2>/dev/null; "
+        r"pkill -f 'ctl-rsync-offline|\.zfs/snapshot/pre_rsync' 2>/dev/null; "
+        "for s in $(zfs list -t snapshot -H -o name 2>/dev/null | grep '@pre_rsync_'); do "
+        "nohup zfs destroy \"$s\" >/dev/null 2>&1 & done; "
+        f"rm -rf {REMOTE_RUNDIR}; true",
+        timeout=30,
+    )
+    _state_cache["ts"] = 0.0
+
+
+def trigger_backup(_auto=False):
+    if _nas_backup_state(force=True)["class"] in ("running", "stalled", "finished"):
         return False, "Backup läuft bereits"
-    t = threading.Thread(target=_run_backup, daemon=True)
-    t.start()
-    return True, "Backup gestartet"
+    if not _auto:
+        # Manueller/geplanter Start = frische Absicht: Abbruch-Marker löschen,
+        # Resume-Zähler zurücksetzen.
+        _clear_abort_marker()
+        _resume["attempts"] = 0
+        _resume["next_at"] = 0.0
+    threading.Thread(target=_run_backup, daemon=True).start()
+    return True, ("Backup wiederaufgenommen" if _auto else "Backup gestartet")
 
 
 def abort_backup():
     global _backup_proc
     if not is_backup_running():
         return False, "Kein Backup läuft"
-    # screen-Session auf der NAS beenden und verwaiste rsync/ssh-Prozesse killen,
-    # damit der ZFS-Snapshot-Mount freigegeben wird.
-    _nas_ssh(
-        f"screen -S {SCREEN_NAME} -X quit 2>/dev/null; "
-        r"pkill -f 'ctl-rsync-offline|\.zfs/snapshot/pre_rsync' 2>/dev/null; true",
-        timeout=20,
-    )
+    # Marker setzen: ein MANUELLER Abbruch darf nicht automatisch wiederaufgenommen
+    # werden (im Gegensatz zu einem Crash/Hänger).
+    try:
+        with open(ABORT_MARKER, "w") as f:
+            f.write(datetime.now(timezone.utc).isoformat())
+    except OSError:
+        pass
+    _resume["attempts"] = 0
+    _resume["next_at"] = 0.0
+    _cleanup_nas_run()
     # Lokalen Launcher/Tail beenden (das eigentliche Backup lief auf der NAS).
     proc = _backup_proc
     if proc is not None and proc.poll() is None:
@@ -315,12 +412,11 @@ def abort_backup():
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-    _screen_cache["ts"] = 0.0
     try:
         os.unlink(BACKUP_LOCK)
     except OSError:
         pass
-    log.info("Backup manuell abgebrochen (NAS screen beendet)")
+    log.info("Backup manuell abgebrochen (kein Auto-Resume)")
     return True, "Backup abgebrochen"
 
 
@@ -407,20 +503,84 @@ def _finalize_from_nas():
     return True
 
 
+def _write_status(status):
+    try:
+        with open(STATUS_FILE, "w") as f:
+            json.dump({"status": status,
+                       "last_run": datetime.now().astimezone().isoformat()}, f)
+    except OSError:
+        pass
+    if _mqtt_client:
+        try:
+            _mqtt_client.publish_state()
+        except Exception:
+            pass
+
+
+def _auto_resume_enabled():
+    return bool(read_options().get("auto_resume_backup", True))
+
+
+def _handle_stuck(cls):
+    """Hänger/Crash: aufräumen und – sofern kein manueller Abbruch und Auto-Resume
+    aktiv – nach Backoff automatisch wiederaufnehmen (begrenzt auf MAX-Versuche)."""
+    if os.path.exists(ABORT_MARKER):
+        return  # manueller Abbruch → niemals automatisch wiederaufnehmen
+    now = time.time()
+    if not _auto_resume_enabled():
+        if _resume["next_at"] == 0.0:
+            log.warning("Offsite-Backup hängt (%s) – Auto-Resume deaktiviert, nur aufräumen", cls)
+            _cleanup_nas_run()
+            _write_status("failed")
+            _resume["next_at"] = -1.0
+        return
+    if _resume["next_at"] == 0.0:
+        # Erstes Erkennen dieses Hängers: aufräumen + Wiederaufnahme planen.
+        log.warning("Offsite-Backup hängt (%s) – aufräumen + Wiederaufnahme planen", cls)
+        _cleanup_nas_run()
+        _write_status("failed")
+        if _resume["attempts"] >= MAX_RESUME_ATTEMPTS:
+            log.error("Auto-Resume: Max. Versuche (%d) erreicht – gebe auf", MAX_RESUME_ATTEMPTS)
+            _resume["next_at"] = -1.0
+            return
+        _resume["next_at"] = now + RESUME_BACKOFF_SECS
+        log.warning("Auto-Resume in %d min geplant (Versuch %d/%d)",
+                    RESUME_BACKOFF_SECS // 60, _resume["attempts"] + 1, MAX_RESUME_ATTEMPTS)
+
+
+def _maybe_fire_resume():
+    """Löst eine fällige, geplante Wiederaufnahme aus — zustandsunabhängig, da
+    der Lauf nach dem Cleanup wieder `idle` ist."""
+    if (_resume["next_at"] > 0 and time.time() >= _resume["next_at"]
+            and not os.path.exists(ABORT_MARKER) and _auto_resume_enabled()):
+        _resume["attempts"] += 1
+        _resume["next_at"] = 0.0
+        log.warning("Auto-Resume #%d des Offsite-Backups wird gestartet", _resume["attempts"])
+        trigger_backup(_auto=True)
+
+
 def _nas_watch_loop():
-    """Erkennt das Ende eines NAS-Laufs auch ohne lebenden Launcher (Container-
-    Neustart-Resilienz) und finalisiert dann den Status. Schlägt das Finalize
-    fehl (NAS kurz nicht erreichbar), wird es bei den nächsten Ticks erneut
-    versucht, bis das RunDir geholt+aufgeräumt ist."""
-    was_running = is_backup_running()
+    """Zustandsmaschine über die NAS-Sonde: finalisiert beendete Läufe (auch ohne
+    lebenden Launcher → Container-Neustart-Resilienz), erkennt Hänger/Crashes und
+    nimmt das Backup nach Backoff automatisch wieder auf — außer es wurde manuell
+    abgebrochen (Marker) oder Auto-Resume ist deaktiviert."""
     pending = False
     while True:
         time.sleep(20)
         try:
-            running = is_backup_running()
-            if (was_running and not running) or pending:
+            cls = _nas_backup_state(force=True)["class"]
+            if cls == "finished" or pending:
                 pending = not _finalize_from_nas()
-            was_running = running
+                if not pending:
+                    _resume["attempts"] = 0
+                    _resume["next_at"] = 0.0
+            elif cls == "running":
+                _resume["next_at"] = 0.0   # echte Aktivität → keine Wiederaufnahme nötig
+            elif cls in ("stalled", "crashed"):
+                _handle_stuck(cls)
+            elif cls == "idle":
+                _maybe_fire_resume()   # geplante Wiederaufnahme nach Cleanup auslösen
+            # unknown → nichts tun
         except Exception as e:
             log.warning("NAS-Watch Fehler: %s", e)
 
@@ -915,6 +1075,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/status":
             s = read_status()
             s["backup_running"] = is_backup_running()
+            s["backup_state"] = _nas_backup_state()["class"]
             s["backup_started_at"] = _backup_started_at
             s["recovery_running"] = is_recovery_running()
             s["next_run"] = get_next_run()
