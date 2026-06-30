@@ -185,7 +185,12 @@ def _classify_state(st):
     if st["screen"] or st["proc"]:
         if st["rundir"] and 0 <= st["age"] <= STALL_SECS:
             return "running"            # echte, frische Aktivität
-        return "stalled"                # screen lebt, aber RunDir weg / kein Fortschritt
+        if st["rundir"]:
+            return "stalled"            # RunDir da, run.log stale → echter Hänger
+        # RunDir bereits weg (Lauf finalisiert), aber screen/proc noch nicht
+        # gereapt = Post-Finalize-Zombie. KEIN Hänger → idle, damit kein
+        # unnötiger Auto-Resume eines bereits erfolgreichen Laufs ausgelöst wird.
+        return "idle"
     if st["rundir"]:
         return "crashed"                # Prozess tot, RunDir ohne exit_code zurück
     return "idle"
@@ -496,7 +501,13 @@ def _finalize_from_nas():
             json.dump({"status": status, "last_run": datetime.now().astimezone().isoformat()}, f)
     except OSError:
         pass
-    _nas_ssh(f"rm -rf {REMOTE_RUNDIR}")
+    # RunDir entfernen UND die jetzt beendete screen-Session abräumen, damit eine
+    # als „Dead" zurückbleibende Session weder als Post-Finalize-Stall
+    # fehlklassifiziert wird noch den nächsten Lauf-Launcher („ALREADY_RUNNING")
+    # blockiert.
+    _nas_ssh(f"rm -rf {REMOTE_RUNDIR}; "
+             f"screen -S {SCREEN_NAME} -X quit 2>/dev/null; "
+             f"screen -wipe 2>/dev/null; true")
     log.info("Backup auf NAS abgeschlossen (rc=%s) – Log archiviert, status.json nachgezogen", ec or "?")
     if _mqtt_client:
         _mqtt_client.publish_state()
