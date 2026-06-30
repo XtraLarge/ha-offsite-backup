@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.1 - 2026-06-30
+
+### Behoben
+- **Endlose „stalled → Auto-Resume (Versuch 1/3)"-Schleife (False Positive).**
+  Nach einem erfolgreichen Lauf löschte der Watcher das RunDir, doch die bereits
+  beendete NAS-`screen`-Session blieb als „Dead" sichtbar; die Zustandssonde sah
+  dann `screen=1 / RunDir=0 / exit=–` und stufte das als `stalled` ein → unnötiger
+  Auto-Resume eines kompletten Voll-Backups. Da der Versuchszähler bei jedem
+  Finalisieren genullt wird, lief das endlos (immer „Versuch 1/3"), 24/7.
+  Fix: (1) `_classify_state` wertet screen/proc-lebt-aber-RunDir-weg als `idle`
+  (Post-Finalize-Zombie), NICHT als `stalled`; ein ECHTER Hänger (RunDir vorhanden,
+  `run.log` stale) wird unverändert als `stalled` erkannt. (2) `_finalize_from_nas`
+  räumt die beendete `screen`-Session ab (`-X quit` + `-wipe`), damit keine
+  „Dead"-Session zurückbleibt, die den nächsten geplanten Lauf blockieren könnte.
+  Nebeneffekt behoben: `status.json` meldet nicht mehr fälschlich `failed`, während
+  ein gesunder Lauf abgeschlossen wurde. Regressionstest: `tests/classify_state_test.py`.
+
 ## 1.4.0 - 2026-06-12
 
 ### Neu
