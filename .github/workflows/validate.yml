@@ -77,3 +77,12 @@ jobs:
       - name: Run upgrade/boot test
         if: steps.base.outputs.tag != ''
         run: bash tests/upgrade_boot_test.sh offsite:old offsite:new
+
+  leak-guard:
+    name: Leak-Guard (interne Namen/Keys/Secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run leak-guard (nur getrackte Dateien)
+        run: bash scripts/naming-guard.sh
