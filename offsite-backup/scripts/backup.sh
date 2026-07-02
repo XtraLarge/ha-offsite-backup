@@ -59,6 +59,7 @@ OFFSITE_PORT=$(jq -r '.offsite_port // 23' "$OPTIONS_FILE")
 OFFSITE_BOX_ID=$(jq -r '.offsite_box_id' "$OPTIONS_FILE")
 OFFSITE_PATH=$(jq -r '.offsite_path // "/home"' "$OPTIONS_FILE")
 SNAPSHOT_PREFIX=$(jq -r '.snapshot_prefix // "pre_rsync"' "$OPTIONS_FILE")
+OFFSITE_SNAPSHOT_KEEP=$(jq -r '.offsite_snapshot_keep // 20' "$OPTIONS_FILE")
 # Frei konfigurierbare Quell-Mounts (Liste). base64, damit das JSON unverändert
 # durch den Launcher-Heredoc auf die NAS gelangt (keine Quoting-Probleme).
 BACKUP_SOURCES_B64=$(jq -c '.backup_sources // []' "$OPTIONS_FILE" | base64 -w0)
@@ -145,6 +146,7 @@ export OFFSITE_PORT='${OFFSITE_PORT}'
 export OFFSITE_BOX_ID='${OFFSITE_BOX_ID}'
 export OFFSITE_PATH='${OFFSITE_PATH}'
 export SNAPSHOT_PREFIX='${SNAPSHOT_PREFIX}'
+export OFFSITE_SNAPSHOT_KEEP='${OFFSITE_SNAPSHOT_KEEP}'
 screen -dmS "\$SCREEN_NAME" bash "\$RUNDIR/nas_bootstrap.sh"
 sleep 1
 sessions="\$(screen -ls 2>/dev/null || true)"
