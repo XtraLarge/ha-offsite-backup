@@ -9,6 +9,7 @@ OFFSITE_HOST="${OFFSITE_HOST:?Offsite-Host nicht gesetzt – wird von backup.sh 
 OFFSITE_PATH="${OFFSITE_PATH:-/home}"
 OFFSITE_PORT="${OFFSITE_PORT:-23}"
 OFFSITE_BOX_ID="${OFFSITE_BOX_ID:?Offsite-Box-ID nicht gesetzt – wird von backup.sh übergeben}"
+OFFSITE_SNAPSHOT_KEEP="${OFFSITE_SNAPSHOT_KEEP:-20}"
 USE_SSH_PASSWORD="${USE_SSH_PASSWORD:-0}"
 STATUS_INTERVAL=60
 RSYNC_MAX_RETRIES=5
@@ -321,9 +322,53 @@ for ((i=0; i<NUM_SRC; i++)); do
   fi
 done
 
+prune_storagebox_snapshots() {
+  # Retention: haelt die Zahl der EIGENEN Offsite-Snapshots (Beschreibung
+  # "Snap_...") unter OFFSITE_SNAPSHOT_KEEP, damit das Hetzner-Snapshot-Limit
+  # nicht erreicht wird (sonst schlaegt die Neuerstellung fehl -> rc=1).
+  # Fremde Snapshots (andere Beschreibung) werden NIE angetastet.
+  local keep="${OFFSITE_SNAPSHOT_KEEP:-20}"
+  [[ "$keep" =~ ^[0-9]+$ ]] || { echo "$(date '+%F %T'): Retention: ungueltiges keep=$keep – uebersprungen"; return 0; }
+  (( keep < 1 )) && { echo "$(date '+%F %T'): Retention: keep<1 – uebersprungen (kein Auto-Loeschen)"; return 0; }
+  local list
+  list="$(curl -sS -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
+      "https://api.hetzner.com/v1/storage_boxes/$OFFSITE_BOX_ID/snapshots")" || {
+      echo "$(date '+%F %T'): Retention: Snapshot-Liste nicht abrufbar – uebersprungen"; return 0; }
+  mapfile -t own < <(jq -r '.snapshots[]? | select(.description // "" | startswith("Snap_")) | "\(.created)\t\(.id)"' <<<"$list" 2>/dev/null | sort)
+  local total="${#own[@]}"
+  local target=$(( keep - 1 ))        # Platz fuer den gleich neu zu erstellenden Snapshot
+  (( target < 0 )) && target=0
+  local to_delete=$(( total - target ))
+  if (( to_delete <= 0 )); then
+    echo "$(date '+%F %T'): Retention: $total eigene Snapshots (keep=$keep) – nichts zu loeschen"
+    return 0
+  fi
+  echo "$(date '+%F %T'): Retention: $total eigene Snapshots > keep=$keep – loesche $to_delete aelteste"
+  local i id created
+  for (( i=0; i<to_delete; i++ )); do
+    created="${own[$i]%%$'\t'*}"; id="${own[$i]#*$'\t'}"
+    echo "$(date '+%F %T'): Retention: loesche Snapshot $id ($created)"
+    curl -sS -X DELETE -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
+      "https://api.hetzner.com/v1/storage_boxes/$OFFSITE_BOX_ID/snapshots/$id" >/dev/null \
+      || echo "$(date '+%F %T'): WARN: Loeschen von Snapshot $id fehlgeschlagen"
+  done
+  # Warten bis die (asynchronen) Loesch-Actions die Zahl gesenkt haben, damit
+  # die anschliessende Neuerstellung nicht am noch vollen Limit scheitert.
+  local waited=0 cnt
+  while (( waited < 120 )); do
+    cnt="$(curl -sS -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
+        "https://api.hetzner.com/v1/storage_boxes/$OFFSITE_BOX_ID/snapshots" \
+        | jq -r '[.snapshots[]? | select(.description // "" | startswith("Snap_"))] | length' 2>/dev/null)"
+    [[ "$cnt" =~ ^[0-9]+$ ]] && (( cnt <= target )) && { echo "$(date '+%F %T'): Retention: fertig ($cnt eigene Snapshots)"; return 0; }
+    sleep 5; waited=$(( waited + 5 ))
+  done
+  echo "$(date '+%F %T'): Retention: Warten auf Loeschung ueberschritten – fahre fort"
+}
+
 create_storagebox_snapshot() {
   local desc; desc="Snap_$(date +%F)"
   echo "$(date '+%F %T'): Erstelle Offsite Snapshot: $desc"
+  prune_storagebox_snapshots
   local resp
   resp="$(curl -sS -X POST \
     -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \

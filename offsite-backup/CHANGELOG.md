@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.0 - 2026-07-02
+
+### Behoben / Neu
+- **Offsite-Lauf schlug mit rc=1 fehl, sobald das Hetzner-Storage-Box-Snapshot-
+  Limit erreicht war.** Der Daten-Transfer (rsync) war vollstaendig erfolgreich;
+  nur der letzte Schritt `create_storagebox_snapshot` scheiterte, weil die Box
+  (Plan bx31) `snapshot_limit=30` hat und bereits 30 Snapshots existierten. Das
+  Add-on hatte bisher KEINE Retention – die woechentlichen `Snap_<Datum>`-Snapshots
+  akkumulierten unbegrenzt (verstaerkt durch die in 1.4.1 behobene Auto-Resume-
+  Schleife, die mehrere Snapshots/Tag erzeugte).
+  Fix: Neue Snapshot-Retention. `backup_nas.sh` loescht vor dem Erstellen eines
+  neuen Snapshots die aeltesten EIGENEN Snapshots (Beschreibung `Snap_...`), bis
+  weniger als `offsite_snapshot_keep` uebrig sind, und wartet, bis die Loeschung
+  wirkt. Fremde Snapshots (andere Beschreibung) werden nie angetastet.
+- **Neue Option `offsite_snapshot_keep`** (Default `20`): maximale Zahl der vom
+  Add-on gehaltenen Offsite-Snapshots. `0`/ungueltig = Auto-Loeschen deaktiviert.
+
 ## 1.4.1 - 2026-06-30
 
 ### Behoben
