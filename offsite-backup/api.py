@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """HTTP-API und Web-Dashboard für das HA Offsite Backup Add-on."""
 import json
+from collections import deque
 import logging
 import os
 import subprocess
@@ -23,6 +24,8 @@ NAS_KEY = SECRETS_DIR + "/id_ed25519_storage"
 SCREEN_NAME = "offsite-backup"
 REMOTE_RUNDIR = "/dev/shm/offsite-backup"
 ABORT_MARKER = "/data/aborted-by-user"   # manueller Abbruch → kein Auto-Resume
+PERMANENT_FAIL_MARKER = "/data/permanent-fail"  # persistenter Stopp fuer Auto-Resume bei permanentem Fehlerbild (z.B. Offsite-Quota voll) – ueberlebt Container-Neustart/OOM
+PERMANENT_FAIL_MARKERS_TXT = ("disk quota exceeded", "quota exceeded", "no space left on device")
 # Watchdog / Auto-Resume
 STALL_SECS = 1800           # run.log seit >30 min ohne Aktivität → hängend
 RESUME_BACKOFF_SECS = 1800  # Wartezeit vor automatischer Wiederaufnahme (30 min)
@@ -85,8 +88,9 @@ def read_options():
 def read_log(lines=100):
     try:
         with open(LOG_FILE) as f:
-            all_lines = f.readlines()
-            return all_lines[-lines:]
+            # bounded tail: haelt nur die letzten `lines` Zeilen im RAM,
+            # egal wie gross die Datei ist (verhinderte Host-OOM bei Riesen-Log)
+            return list(deque(f, maxlen=lines))
     except Exception:
         return []
 
@@ -111,7 +115,7 @@ def read_finished_log(lines=100):
     if path:
         try:
             with open(path) as f:
-                return f.readlines()[-lines:]
+                return list(deque(f, maxlen=lines))
         except Exception:
             pass
     return read_log(lines)
@@ -394,6 +398,7 @@ def trigger_backup(_auto=False):
         # Manueller/geplanter Start = frische Absicht: Abbruch-Marker löschen,
         # Resume-Zähler zurücksetzen.
         _clear_abort_marker()
+        _clear_permanent_failure()
         _resume["attempts"] = 0
         _resume["next_at"] = 0.0
     threading.Thread(target=_run_backup, daemon=True).start()
@@ -511,8 +516,13 @@ def _finalize_from_nas():
     # Transfer fehlgeschlagen → sofort failed, kein Smoke nötig.
     if ec != "0":
         _archive_run_log("failed", ec, log_text)
-        _write_final_status("failed", reason=f"Offsite-Transfer fehlgeschlagen (rc={ec})")
-        log.info("Backup auf NAS fehlgeschlagen (rc=%s) – status.json=failed", ec or "?")
+        if _log_is_permanent_failure(log_text):
+            _mark_permanent_failure(f"Permanenter Offsite-Fehler (rc={ec}, z.B. Storagebox-Quota voll)")
+            _write_final_status("failed", reason=f"Permanenter Fehler (Offsite-Quota o.ä., rc={ec}) – Auto-Resume gestoppt, manueller Eingriff nötig")
+            log.error("Backup permanent fehlgeschlagen (rc=%s, Quota o.ä.) – Auto-Resume dauerhaft gestoppt (Marker gesetzt)", ec or "?")
+        else:
+            _write_final_status("failed", reason=f"Offsite-Transfer fehlgeschlagen (rc={ec})")
+            log.info("Backup auf NAS fehlgeschlagen (rc=%s) – status.json=failed", ec or "?")
         return True
 
     # Transfer ok. Der Erfolgsstatus wird NICHT mehr allein aus rc=0 abgeleitet,
@@ -547,6 +557,42 @@ def _write_status(status):
             pass
 
 
+def _log_is_permanent_failure(text):
+    """True, wenn ein Lauf-Log ein PERMANENTES Fehlerbild zeigt (z.B. Offsite-
+    Storagebox-Quota voll). Solche Fehler wiederholen sich identisch – ein
+    Auto-Resume wuerde nur getaktete Volllast-Laeufe (bis zum Host-OOM) erzeugen."""
+    low = (text or "").lower()
+    return any(m in low for m in PERMANENT_FAIL_MARKERS_TXT)
+
+
+def _mark_permanent_failure(reason):
+    """Persistenter Stopp-Marker (ueberlebt Container-Neustart/OOM, im Gegensatz
+    zum In-Memory-_resume-Zaehler, der bei jedem OOM-Neustart auf 0 zuruecksetzt
+    und so den 3-Versuche-Deckel unwirksam machte)."""
+    try:
+        with open(PERMANENT_FAIL_MARKER, "w") as f:
+            f.write(f"{datetime.now().astimezone().isoformat()} {reason}")
+    except OSError:
+        pass
+
+
+def _clear_permanent_failure():
+    try:
+        os.remove(PERMANENT_FAIL_MARKER)
+    except OSError:
+        pass
+
+
+def _nas_run_shows_permanent_failure():
+    """Prueft das aktuelle NAS-run.log (Tail) auf ein permanentes Fehlerbild."""
+    try:
+        r = _nas_ssh(f"tail -c 65536 '{REMOTE_RUNDIR}/run.log' 2>/dev/null", timeout=15)
+        txt = r.stdout if (r is not None and r.returncode == 0) else ""
+        return _log_is_permanent_failure(txt)
+    except Exception:
+        return False
+
+
 def _auto_resume_enabled():
     return bool(read_options().get("auto_resume_backup", True))
 
@@ -557,6 +603,15 @@ def _handle_stuck(cls):
     if os.path.exists(ABORT_MARKER):
         return  # manueller Abbruch → niemals automatisch wiederaufnehmen
     now = time.time()
+    if os.path.exists(PERMANENT_FAIL_MARKER):
+        # permanentes Fehlerbild bereits erkannt (persistenter Marker, ueberlebt
+        # OOM-Neustart) → NIE Auto-Resume, nur einmal sauber als failed melden.
+        if _resume["next_at"] != -1.0:
+            log.error("Offsite-Backup hängt (%s) – permanenter Fehler-Marker aktiv, kein Auto-Resume", cls)
+            _cleanup_nas_run()
+            _write_final_status("failed", reason="Permanenter Fehler (Offsite-Quota o.ä.) – Auto-Resume gestoppt, manueller Eingriff nötig")
+            _resume["next_at"] = -1.0
+        return
     if not _auto_resume_enabled():
         if _resume["next_at"] == 0.0:
             log.warning("Offsite-Backup hängt (%s) – Auto-Resume deaktiviert, nur aufräumen", cls)
@@ -565,6 +620,15 @@ def _handle_stuck(cls):
             _resume["next_at"] = -1.0
         return
     if _resume["next_at"] == 0.0:
+        # Permanentes Fehlerbild (z.B. Offsite-Quota voll) VOR dem Cleanup am
+        # NAS-run.log erkennen – ein Auto-Resume waere sinnlos und OOM-treibend.
+        if _nas_run_shows_permanent_failure():
+            log.error("Offsite-Backup hängt (%s) – PERMANENTES Fehlerbild (Quota o.ä.) erkannt; Auto-Resume gestoppt (Marker gesetzt)", cls)
+            _mark_permanent_failure("Permanenter Offsite-Fehler (Quota o.ä.) bei Hänger erkannt")
+            _cleanup_nas_run()
+            _write_final_status("failed", reason="Permanenter Fehler (Offsite-Quota o.ä.) – Auto-Resume gestoppt, manueller Eingriff nötig")
+            _resume["next_at"] = -1.0
+            return
         # Erstes Erkennen dieses Hängers: aufräumen + Wiederaufnahme planen.
         log.warning("Offsite-Backup hängt (%s) – aufräumen + Wiederaufnahme planen", cls)
         _cleanup_nas_run()
@@ -582,7 +646,9 @@ def _maybe_fire_resume():
     """Löst eine fällige, geplante Wiederaufnahme aus — zustandsunabhängig, da
     der Lauf nach dem Cleanup wieder `idle` ist."""
     if (_resume["next_at"] > 0 and time.time() >= _resume["next_at"]
-            and not os.path.exists(ABORT_MARKER) and _auto_resume_enabled()):
+            and not os.path.exists(ABORT_MARKER)
+            and not os.path.exists(PERMANENT_FAIL_MARKER)
+            and _auto_resume_enabled()):
         _resume["attempts"] += 1
         _resume["next_at"] = 0.0
         log.warning("Auto-Resume #%d des Offsite-Backups wird gestartet", _resume["attempts"])
@@ -660,6 +726,9 @@ def _smoke_enabled():
 def _write_final_status(status, reason="", smoke=None):
     """Einzige autoritative status.json-Schreibstelle für den Abschluss. Enthält
     optional Grund + Smoke-Zusammenfassung (Beobachtbarkeit)."""
+    if status == "success":
+        # erfolgreicher Lauf – persistenten Permanent-Fehler-Marker aufheben
+        _clear_permanent_failure()
     payload = {"status": status,
                "last_run": datetime.now().astimezone().isoformat()}
     if reason:

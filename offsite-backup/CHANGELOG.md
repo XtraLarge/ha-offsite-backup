@@ -33,6 +33,25 @@
   0444; der Inhalt bleibt unverändert (BackupPC leitet die Marker selbst wieder ab),
   die Modes der übrigen Quellen bleiben 1:1.
 
+### Behoben — Host-OOM auf HA-Pi (Wissen #1497)
+- **Das Dashboard-Backend lud die gesamte `backup.log` in den RAM.** `api.py`
+  `read_log()`/`read_finished_log()` nutzten `f.readlines()`, um nur die letzten
+  N Zeilen zu liefern — bei einem unrotiert auf 372 MB gewachsenen Log blähte das
+  den RSS auf ~2,6 GB und löste auf dem 3,7-GB-Pi einen globalen Kernel-OOM aus
+  (killte `python3`). Ersetzt durch einen bounded Tail (`list(deque(f, maxlen=N))`)
+  — konstanter Speicher unabhängig von der Dateigröße.
+- **`backup.log` wird jetzt vor jedem Lauf hart auf 5 MiB begrenzt** (Size-Cap-
+  Rotation in `backup.sh`). Die vollständige Historie je Lauf bleibt archiviert
+  unter `/data/logs/runs/`; der Live-Mirror bleibt dauerhaft klein.
+- **Auto-Resume stoppt bei permanentem Fehlerbild dauerhaft.** Bei einem
+  permanenten Offsite-Fehler (z. B. Storagebox-Quota voll: `Disk quota exceeded`)
+  wird ein PERSISTENTER Marker (`/data/permanent-fail`) gesetzt, der den
+  automatischen 30-min-Resume unterbindet. Bisher lag der Versuchszähler nur im
+  RAM — ein OOM-Neustart setzte ihn zurück, wodurch der 3-Versuche-Deckel nie
+  griff und getaktete Volllast-/OOM-Läufe gegen die volle Quota liefen. Der
+  Marker überlebt den Neustart und wird bei einem erfolgreichen Lauf oder einem
+  manuellen/geplanten Start automatisch wieder aufgehoben.
+
 
 ## 1.4.1 - 2026-06-30
 
