@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.6.0 - 2026-07-17
+
+### Neu — Self-validating Offsite-Backup (Wissen #751)
+- **Der Erfolgsstatus einer Offsite-Sicherung kommt jetzt aus einem Recovery-
+  Smoke-Test, nicht mehr allein aus rc=0.** Nach jedem erfolgreichen Transfer
+  startet das Add-on automatisch die BackupPC-Recovery-Umgebung, die die
+  Offsite-Kopie verifiziert: (1) sind die erwarteten Hosts sichtbar, (2) sind die
+  jüngsten Backup-Zeitpunkte plausibel, (3) lässt sich eine kleine Datei aus dem
+  jüngsten Backup wiederherstellen (echter Durchstich Offsite→Pool→lesbar). Nur
+  wenn ALLE drei grün sind → `success`; sonst `failed` mit Ursache. Während der
+  Prüfung steht der Status auf `verifying`.
+- **Neue Option `smoke_test_after_backup`** (Default `true`): schaltet den
+  automatischen Post-Backup-Smoke ein/aus.
+- Läuft die Recovery-Umgebung bereits (manuelle Nutzung), wird der Smoke
+  übersprungen statt die Sitzung zu stören.
+
+### Behoben
+- **False-Positive `failed` nach erfolgreichem Lauf (Wissen #744).** Der HA-seitige
+  Launcher (`backup.sh`) schrieb den Erfolgsstatus aus seinem eigenen Exit-Code —
+  einem Proxy, der bei SSH-Pipe-Abriss / Container-Neustart fehlschlägt, obwohl der
+  Lauf auf der NAS sauber weiterläuft. Diese widersprüchliche Statusquelle ist
+  entfernt; autoritativ ist jetzt allein `api.py:_finalize_from_nas` (NAS-Exit-Code)
+  plus der nachgelagerte Smoke-Test.
+
+### Härtung (Wissen #747/#748)
+- **Offsite-rsync des BackupPC-Pools maskiert das transiente `pending-delete`-
+  Markerbit** (`--chmod=Fo-x`, nur auf dem Pool-Pfad). Das other-execute-Bit
+  (S_IXOTH → Mode 0445) wechselt im Normalbetrieb ständig; mit `-p`+`-W` erzeugte
+  jeder Wechsel einen Perm-Diff und damit CoW-Churn auf der Hetzner-Box (bis zum
+  Box-Überlauf). Die Offsite-Kopie bekommt nun stets den kanonischen Pool-Mode
+  0444; der Inhalt bleibt unverändert (BackupPC leitet die Marker selbst wieder ab),
+  die Modes der übrigen Quellen bleiben 1:1.
+
+### Behoben — Host-OOM auf HA-Pi (Wissen #1497)
+- **Das Dashboard-Backend lud die gesamte `backup.log` in den RAM.** `api.py`
+  `read_log()`/`read_finished_log()` nutzten `f.readlines()`, um nur die letzten
+  N Zeilen zu liefern — bei einem unrotiert auf 372 MB gewachsenen Log blähte das
+  den RSS auf ~2,6 GB und löste auf dem 3,7-GB-Pi einen globalen Kernel-OOM aus
+  (killte `python3`). Ersetzt durch einen bounded Tail (`list(deque(f, maxlen=N))`)
+  — konstanter Speicher unabhängig von der Dateigröße.
+- **`backup.log` wird jetzt vor jedem Lauf hart auf 5 MiB begrenzt** (Size-Cap-
+  Rotation in `backup.sh`). Die vollständige Historie je Lauf bleibt archiviert
+  unter `/data/logs/runs/`; der Live-Mirror bleibt dauerhaft klein.
+- **Auto-Resume stoppt bei permanentem Fehlerbild dauerhaft.** Bei einem
+  permanenten Offsite-Fehler (z. B. Storagebox-Quota voll: `Disk quota exceeded`)
+  wird ein PERSISTENTER Marker (`/data/permanent-fail`) gesetzt, der den
+  automatischen 30-min-Resume unterbindet. Bisher lag der Versuchszähler nur im
+  RAM — ein OOM-Neustart setzte ihn zurück, wodurch der 3-Versuche-Deckel nie
+  griff und getaktete Volllast-/OOM-Läufe gegen die volle Quota liefen. Der
+  Marker überlebt den Neustart und wird bei einem erfolgreichen Lauf oder einem
+  manuellen/geplanten Start automatisch wieder aufgehoben.
+
+
 ## 1.4.1 - 2026-06-30
 
 ### Behoben

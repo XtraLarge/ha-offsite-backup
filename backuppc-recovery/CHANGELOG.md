@@ -1,3 +1,15 @@
+## 2.2.0
+
+- **Recovery-Smoke-Test (Wissen #751).** Neues Modul `smoke.py`: prüft nach dem
+  Start die Offsite-Kopie auf (1) erwartete Hosts (pc/ ↔ BackupPC-hosts-Konfig),
+  (2) plausible jüngste Backup-Zeitpunkte je Host, (3) Mini-Restore einer kleinen
+  Datei aus dem jüngsten Backup via `BackupPC_tarCreate` (echter Durchstich
+  Offsite→Pool→lesbar). Das Ergebnis wird nach `/data/smoke.json` geschrieben und
+  über den HTTP-Status (`:9080/smoke`) ausgeliefert. Das Offsite-Backup-Add-on holt
+  es dort ab und leitet daraus den Erfolgsstatus der Sicherung ab (nur 3/3 grün →
+  `success`). Der Smoke läuft im Hintergrund und stört die manuelle Recovery-Nutzung
+  nicht.
+
 ## 2.1.2
 
 - `squash: false` aus `build.yaml` entfernt — vom Supervisor (Docker Buildkit) nicht mehr unterstützt (Konsistenz mit dem Offsite-Add-on, das deswegen im CI-Linter fehlschlug).

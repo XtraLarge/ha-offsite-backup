@@ -110,10 +110,14 @@ def read_datastand():
         return ""
 
 
-def start_status_server(get_state_fn):
+def start_status_server(get_state_fn, get_smoke_fn=None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            body = json.dumps(get_state_fn(), ensure_ascii=False).encode()
+            if self.path.rstrip("/") == "/smoke" and get_smoke_fn is not None:
+                payload = get_smoke_fn()
+            else:
+                payload = get_state_fn()
+            body = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -123,6 +127,54 @@ def start_status_server(get_state_fn):
 
     server = HTTPServer(("", 9080), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+# ── Recovery-Smoke-Test (Wissen #751) ────────────────────────────────────────
+# Der Smoke laeuft EINMAL im Hintergrund, sobald der Offsite-Pool ueber SSHFS
+# verfuegbar ist (run.sh hat vorher gemountet, Config importiert, TopDir gesetzt).
+# Das Ergebnis wird nach /data/smoke.json geschrieben und ueber HTTP /smoke
+# ausgeliefert; das offsite-backup-Addon holt es dort ab und bestimmt daraus den
+# Erfolgsstatus der Offsite-Sicherung.
+_smoke_state = {"status": "pending", "result": None}
+
+
+def _wait_for_pool(topdir, timeout=180):
+    import os
+    if not topdir:
+        return False
+    pc = os.path.join(topdir, "pc")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if os.path.isdir(pc) and os.listdir(pc):
+                return True
+        except OSError:
+            pass
+        time.sleep(3)
+    return False
+
+
+def start_smoke_worker():
+    def _work():
+        try:
+            import smoke
+            topdir = smoke.read_topdir()
+            if not _wait_for_pool(topdir):
+                res = {"ok": False, "reason": "Pool nicht rechtzeitig verfuegbar (SSHFS)",
+                       "checks": {}, "target": {"host": None, "num": None}}
+            else:
+                res = smoke.run_smoke(topdir=topdir)
+            smoke.write_result(res)
+            _smoke_state["result"] = res
+            _smoke_state["status"] = "done"
+            log.info("Recovery-Smoke abgeschlossen: ok=%s reason=%s",
+                     res.get("ok"), res.get("reason", ""))
+        except Exception as e:  # fail-closed
+            log.warning("Recovery-Smoke Fehler: %s", e)
+            _smoke_state["result"] = {"ok": False, "reason": f"Smoke-Ausnahme: {e}",
+                                      "checks": {}, "target": {"host": None, "num": None}}
+            _smoke_state["status"] = "error"
+    threading.Thread(target=_work, daemon=True).start()
 
 
 if __name__ == "__main__":
@@ -143,7 +195,8 @@ if __name__ == "__main__":
     url = f"http://{ip}:8080/BackupPC_Admin"
 
     state_cache = {"datastand": datastand, "source": source, "url": url}
-    start_status_server(lambda: state_cache)
+    start_status_server(lambda: state_cache, lambda: _smoke_state)
+    start_smoke_worker()
 
     client = start_mqtt(opts)
 
