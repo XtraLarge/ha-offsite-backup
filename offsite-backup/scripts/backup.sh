@@ -10,7 +10,6 @@ set -euo pipefail
 SCRIPT_DIR="/scripts"
 SECRETS_DIR="/data/secrets"
 LOG_FILE="/data/logs/backup.log"
-STATUS_FILE="/data/logs/status.json"
 OPTIONS_FILE="/data/options.json"
 
 SCREEN_NAME="offsite-backup"
@@ -24,12 +23,18 @@ echo "$(date '+%F %T'): Offsite Backup gestartet (screen-on-NAS)"
 echo "$(date '+%F %T'): ============================================"
 
 _finalize() {
+  # WICHTIG: Dieser Launcher (HA-Seite) ist NUR Anstoesser/Mitschreiber. Sein
+  # Exit-Code ist ein PROXY: bei SSH-Pipe-Abriss / Container-Neustart schlaegt er
+  # fehl, obwohl der Lauf auf der NAS sauber weiterlaeuft. Er DARF daher NICHT den
+  # Erfolgsstatus schreiben (sonst False-Positive "failed", Wissen #744, bzw. eine
+  # widerspruechliche Statusquelle). AUTORITATIV ist api.py:_finalize_from_nas
+  # (NAS-exit_code) + der nachgelagerte Recovery-Smoke-Test (Wissen #751).
+  # Hier nur informativer Loki-Log-Versand, KEIN Status.
   local rc=$?
-  local status="success"
-  [[ $rc -ne 0 ]] && status="failed"
+  local ship_status="success"
+  [[ $rc -ne 0 ]] && ship_status="incomplete"
   LOKI_URL=$(jq -r '.loki_url // ""' "$OPTIONS_FILE")
-  [[ -n "$LOKI_URL" ]] && LOKI_URL="$LOKI_URL" bash "$SCRIPT_DIR/loki_ship.sh" "$LOG_FILE" "$status" || true
-  printf '{"status":"%s","last_run":"%s"}\n' "$status" "$(date -Iseconds)" > "$STATUS_FILE"
+  [[ -n "$LOKI_URL" ]] && LOKI_URL="$LOKI_URL" bash "$SCRIPT_DIR/loki_ship.sh" "$LOG_FILE" "$ship_status" || true
 }
 trap '_finalize' EXIT
 

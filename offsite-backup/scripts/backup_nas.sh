@@ -99,6 +99,11 @@ run_rsync() {
     RSYNC_OPTS_EFF=(); local _o
     for _o in "${RSYNC_OPTS[@]}"; do [[ "$_o" == --delete* ]] && continue; RSYNC_OPTS_EFF+=("$_o"); done
   fi
+  # Optionale Zusatz-Optionen (z. B. --chmod=Fo-x fuer den BackupPC-Pool, siehe
+  # run_rsync_parallel): global gesetzt vom Aufrufer, sonst leer.
+  if [[ -n "${RSYNC_EXTRA_OPTS+x}" && "${#RSYNC_EXTRA_OPTS[@]}" -gt 0 ]]; then
+    RSYNC_OPTS_EFF+=("${RSYNC_EXTRA_OPTS[@]}")
+  fi
   local retryable_codes=(10 11 12 30 35 255)
   local attempt=1 max_attempts=$((RSYNC_MAX_RETRIES + 1)) sleep_s="$RSYNC_RETRY_SLEEP"
 
@@ -144,13 +149,24 @@ run_rsync_parallel() {
 
   echo "$(date '+%F %T'): Parallel-Sync (${jobs} Streams): $src_root → ${remote}:${dst_path}/"
 
+  # HAERTUNG (Wissen #747/#748): Der BackupPC-4-Pool markiert Loeschkandidaten
+  # transient ueber das other-execute-Bit (S_IXOTH -> Mode 0445 „pending delete").
+  # Dieses Bit wechselt im Normalbetrieb staendig. Mit -p+-W wuerde jeder Wechsel
+  # einen Perm-Diff und damit CoW-Churn auf der Hetzner-Box erzeugen (bis hin zum
+  # Box-Ueberlauf). --chmod=Fo-x maskiert NUR dieses Bit fuer Dateien: die
+  # Offsite-Kopie bekommt immer den kanonischen Pool-Mode 0444. Der Inhalt bleibt
+  # unveraendert; BackupPC leitet die pending-delete-Marker beim naechsten Lauf
+  # ohnehin selbst wieder ab. Gilt bewusst NUR fuer den Pool-Pfad (nicht global),
+  # damit die Modes der uebrigen Quellen 1:1 erhalten bleiben.
+  local RSYNC_EXTRA_OPTS=(--chmod=Fo-x)
+
   # Struktur-Pass: alles bis Tiefe 2 (Top-Level-Dateien + leere Shard-Dirs),
   # Inhalte ab Tiefe 3 ausgeschlossen (übernehmen die Shards). --delete entfernt
   # hier verwaiste Top-Level-Einträge; ausgeschlossene (= Shard-)Inhalte sind
   # vor Löschung geschützt.
   echo "$(date '+%F %T'): Struktur-Pass (Tiefe ≤2) …"
   local skel_opts=(
-    -aHAX -W --numeric-ids --max-alloc=4G
+    -aHAX -W --numeric-ids --max-alloc=4G --chmod=Fo-x
     --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
     --delete -f '- /*/*/**'
   )
