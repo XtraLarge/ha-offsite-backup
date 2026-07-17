@@ -27,6 +27,11 @@ ABORT_MARKER = "/data/aborted-by-user"   # manueller Abbruch → kein Auto-Resum
 STALL_SECS = 1800           # run.log seit >30 min ohne Aktivität → hängend
 RESUME_BACKOFF_SECS = 1800  # Wartezeit vor automatischer Wiederaufnahme (30 min)
 MAX_RESUME_ATTEMPTS = 3     # danach aufgeben (kein Endlos-Resume)
+# Recovery-Smoke-Test (Wissen #751): nach jedem erfolgreichen Transfer prueft die
+# Recovery-Umgebung die Offsite-Kopie (Hosts + Zeiten + Mini-Restore). Nur bei
+# 3/3 gruen gilt die Sicherung als success.
+SMOKE_POLL_TIMEOUT = 900    # max. Wartezeit auf ein Smoke-Ergebnis (s)
+SMOKE_POLL_INTERVAL = 5     # Poll-Intervall gegen den Recovery-HTTP-Status (s)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("offsite-backup")
@@ -490,27 +495,41 @@ def _finalize_from_nas():
     if "DIR;" not in (r.stdout or ""):
         return True  # RunDir weg → bereits finalisiert
     ec = "".join(c for c in (r.stdout or "").split("DIR;", 1)[1] if c.isdigit())
-    status = "success" if ec == "0" else "failed"
     # Vollständiges Log holen, BEVOR das tmpfs-RunDir gelöscht wird.
     log_r = _nas_ssh(f"cat '{REMOTE_RUNDIR}/run.log' 2>/dev/null", timeout=30)
     if log_r is None:
         return False  # Log nicht erreicht → RunDir NICHT löschen, erneut versuchen
-    _archive_run_log(status, ec, log_r.stdout)
-    try:
-        with open(STATUS_FILE, "w") as f:
-            json.dump({"status": status, "last_run": datetime.now().astimezone().isoformat()}, f)
-    except OSError:
-        pass
+    log_text = log_r.stdout
     # RunDir entfernen UND die jetzt beendete screen-Session abräumen, damit eine
     # als „Dead" zurückbleibende Session weder als Post-Finalize-Stall
     # fehlklassifiziert wird noch den nächsten Lauf-Launcher („ALREADY_RUNNING")
-    # blockiert.
+    # blockiert. Der Lauf auf der NAS ist beendet – unabhängig vom Smoke.
     _nas_ssh(f"rm -rf {REMOTE_RUNDIR}; "
              f"screen -S {SCREEN_NAME} -X quit 2>/dev/null; "
              f"screen -wipe 2>/dev/null; true")
-    log.info("Backup auf NAS abgeschlossen (rc=%s) – Log archiviert, status.json nachgezogen", ec or "?")
-    if _mqtt_client:
-        _mqtt_client.publish_state()
+
+    # Transfer fehlgeschlagen → sofort failed, kein Smoke nötig.
+    if ec != "0":
+        _archive_run_log("failed", ec, log_text)
+        _write_final_status("failed", reason=f"Offsite-Transfer fehlgeschlagen (rc={ec})")
+        log.info("Backup auf NAS fehlgeschlagen (rc=%s) – status.json=failed", ec or "?")
+        return True
+
+    # Transfer ok. Der Erfolgsstatus wird NICHT mehr allein aus rc=0 abgeleitet,
+    # sondern durch den Recovery-Smoke-Test bestimmt (Wissen #751): success NUR,
+    # wenn die Recovery-Umgebung die Offsite-Kopie verifiziert (Hosts + Zeiten +
+    # Mini-Restore). Der Smoke läuft in einem eigenen Thread, damit der Watcher
+    # antwortbereit bleibt; bis dahin steht der Status auf „verifying".
+    if not _smoke_enabled():
+        _archive_run_log("success", ec, log_text)
+        _write_final_status("success")
+        log.info("Backup auf NAS abgeschlossen (rc=0) – Smoke deaktiviert, status.json=success")
+        return True
+
+    _write_final_status("verifying", reason="Recovery-Smoke-Test läuft")
+    log.info("Offsite-Transfer ok (rc=0) – starte Recovery-Smoke-Test zur Verifikation")
+    threading.Thread(target=_smoke_and_finalize, args=(ec, log_text),
+                     daemon=True).start()
     return True
 
 
@@ -628,6 +647,103 @@ def trigger_recovery(action, snapshot_name=""):
     except Exception as e:
         log.warning("Recovery %s fehlgeschlagen: %s", action, e)
         return False, f"Recovery {action} fehlgeschlagen: {e}"
+
+
+# ── Recovery-Smoke-Test-Orchestrierung (Wissen #751) ─────────────────────────
+_smoke_active = threading.Lock()
+
+
+def _smoke_enabled():
+    return bool(read_options().get("smoke_test_after_backup", True))
+
+
+def _write_final_status(status, reason="", smoke=None):
+    """Einzige autoritative status.json-Schreibstelle für den Abschluss. Enthält
+    optional Grund + Smoke-Zusammenfassung (Beobachtbarkeit)."""
+    payload = {"status": status,
+               "last_run": datetime.now().astimezone().isoformat()}
+    if reason:
+        payload["reason"] = reason
+    if smoke is not None:
+        checks = smoke.get("checks") or {}
+        payload["smoke"] = {
+            "ok": smoke.get("ok"),
+            "reason": smoke.get("reason", ""),
+            "target": smoke.get("target"),
+            "skipped": bool(smoke.get("skipped", False)),
+            "checks": {k: bool(v.get("ok")) for k, v in checks.items()
+                       if isinstance(v, dict)},
+        }
+    try:
+        with open(STATUS_FILE, "w") as fobj:
+            json.dump(payload, fobj)
+    except OSError:
+        pass
+    if _mqtt_client:
+        try:
+            _mqtt_client.publish_state()
+        except Exception:
+            pass
+
+
+def _recovery_smoke_url():
+    return (f"http://{RECOVERY_ADDON_SLUG.replace('_', '-')}"
+            f".local.hass.io:9080/smoke")
+
+
+def _poll_recovery_smoke(timeout=SMOKE_POLL_TIMEOUT):
+    """Pollt den Recovery-HTTP-Status auf ein fertiges Smoke-Ergebnis.
+    Rückgabe: result-dict oder None (Timeout)."""
+    url = _recovery_smoke_url()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                data = json.loads(r.read())
+            if data.get("status") in ("done", "error"):
+                return data.get("result")
+        except Exception:
+            pass  # Recovery bootet ggf. noch – weiter pollen
+        time.sleep(SMOKE_POLL_INTERVAL)
+    return None
+
+
+def run_recovery_smoke(snapshot_name=""):
+    """Startet die Recovery-Umgebung, holt das Smoke-Ergebnis, stoppt sie wieder.
+    Rückgabe: (ok, reason, result). Läuft die Recovery bereits (manuelle Nutzung),
+    wird der Smoke übersprungen (ok=True, skipped) statt die Sitzung zu stören."""
+    if is_recovery_running():
+        log.warning("Recovery-Umgebung in Benutzung – Smoke übersprungen")
+        return True, "", {"ok": True, "skipped": True,
+                          "reason": "Recovery-Umgebung in Benutzung – Smoke übersprungen",
+                          "checks": {}, "target": {"host": None, "num": None}}
+    ok_start, msg = trigger_recovery("start", snapshot_name)
+    if not ok_start:
+        return False, f"Recovery-Start fehlgeschlagen: {msg}", None
+    try:
+        result = _poll_recovery_smoke()
+    finally:
+        trigger_recovery("stop")
+    if result is None:
+        return False, "Smoke-Test Timeout (kein Ergebnis vom Recovery-Addon)", None
+    return bool(result.get("ok")), result.get("reason", ""), result
+
+
+def _smoke_and_finalize(ec, log_text):
+    """Läuft im eigenen Thread nach erfolgreichem Transfer: Recovery-Smoke → der
+    Erfolgsstatus ergibt sich AUSSCHLIESSLICH aus dem Smoke-Ergebnis."""
+    if not _smoke_active.acquire(blocking=False):
+        log.warning("Smoke bereits aktiv – überspringe zweiten Lauf")
+        return
+    try:
+        ok, reason, result = run_recovery_smoke("")
+        status = "success" if ok else "failed"
+        note = f"\n{'#' * 60}\n# Recovery-Smoke-Test: ok={ok} – {reason or 'alle Checks grün'}\n"
+        _archive_run_log(status, ec, (log_text or "") + note)
+        _write_final_status(status, reason=("" if ok else reason), smoke=result)
+        log.info("Recovery-Smoke abgeschlossen: status=%s reason=%s", status, reason or "-")
+    finally:
+        _smoke_active.release()
 
 
 def list_snapshots():
