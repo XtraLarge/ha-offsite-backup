@@ -19,6 +19,7 @@ RUN apk add --no-cache \
 
 COPY run.sh /
 COPY state.py /
+COPY smoke.py /
 
 RUN chmod +x /run.sh \
     && mkdir -p /data/logs /data/secrets /mnt/hetzner
