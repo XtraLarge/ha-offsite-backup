@@ -216,9 +216,13 @@ def restore_probe(pc_dir: str, host: str | None, num: int | None,
     tar_create = os.path.join(bpc_bin, "BackupPC_tarCreate")
     # -t = tar-Format an stdout; wir extrahieren via Shell-Pipe den ersten
     # Datei-Inhalt. Der Runner kapselt die Pipe (Prod: tar -xO | head -c).
+    # tarCreate streamt den Share als tar; tar -xOf - schreibt die Datei-Inhalte
+    # auf stdout (busybox-kompatibel, stdin explizit via -f -), head -c bricht
+    # nach den ersten Bytes ab (SIGPIPE -> tarCreate endet frueh = leicht).
+    # tarCreate-stderr -> sh-stderr, damit der Runner den Grund erfassen kann.
     argv = ["/bin/sh", "-c",
-            f'"{tar_create}" -h "$1" -n "$2" -s "$3" / 2>/tmp/smoke_tar.err '
-            f'| tar -xO 2>/dev/null | head -c 64',
+            f'"{tar_create}" -h "$1" -n "$2" -s "$3" / 2>&2 '
+            f'| tar -xOf - 2>/dev/null | head -c 64',
             "sh", host, str(num), share]
     rc, out, err = run(argv)
     nbytes = len(out or b"")
