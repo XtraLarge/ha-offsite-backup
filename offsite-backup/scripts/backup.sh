@@ -17,6 +17,18 @@ REMOTE_RUNDIR="/dev/shm/offsite-backup"
 
 exec >> "$LOG_FILE" 2>&1
 
+# --- Log-Rotation: backup.log hart auf Groesse begrenzen ---------------------
+# Verhindert unbegrenztes Wachstum des Live-Mirrors. Ein zu grosser Log trieb
+# das Dashboard-Backend (api.py) in einen Host-OOM, weil es die Datei ganz in
+# den RAM las. Die vollstaendige Historie je Lauf liegt archiviert unter
+# /data/logs/runs/ (RUNS_KEEP), hier reicht ein begrenzter Live-Mirror.
+LOG_MAX_BYTES=${LOG_MAX_BYTES:-5242880}   # 5 MiB
+if [ -f "$LOG_FILE" ] && [ "$(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+  tail -c "$LOG_MAX_BYTES" "$LOG_FILE" > "${LOG_FILE}.rot" 2>/dev/null \
+    && cat "${LOG_FILE}.rot" > "$LOG_FILE" \
+    && rm -f "${LOG_FILE}.rot"
+fi
+
 echo ""
 echo "$(date '+%F %T'): ============================================"
 echo "$(date '+%F %T'): Offsite Backup gestartet (screen-on-NAS)"

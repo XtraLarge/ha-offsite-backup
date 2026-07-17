@@ -97,10 +97,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-      - name: Python-Tests (classify_state, smoke)
+      - name: Python-Tests (classify_state, smoke, oom/permanent-fail)
         run: |
           python3 tests/classify_state_test.py
           python3 tests/smoke_test.py
+          python3 tests/permanent_fail_test.py
       - name: Shell-Tests (rsync-Haertung, Status-Quelle)
         run: |
           bash tests/rsync_chmod_test.sh
