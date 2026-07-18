@@ -1,3 +1,15 @@
+## 2.2.1
+
+- **Recovery-Smoke: drei E2E-Korrekturen (an echten Offsite-Daten gefunden).**
+  (1) HOSTS: case-insensitiver Vergleich — BackupPC legt `pc/<host>` kleingeschrieben
+  an, die hosts-Konfig behaelt die Original-Schreibweise (sonst faelschlich
+  „Hosts ohne Sicherung"). (2) ZEITEN: Plausibilitaet gegen das ueber ALLE Hosts
+  juengste Backup-Ende statt gegen jeden einzelnen Host — stillgelegte/offline
+  Geraete (alte Einzel-Backups) kippen den Lauf nicht mehr; geprueft wird, ob die
+  Offsite-Kopie insgesamt aktuell ist (+ Zukunfts-Timestamp-Check bleibt).
+  (3) RESTORE: `BackupPC_tarCreate` laeuft jetzt als User `backuppc` (`su -s
+  /bin/sh backuppc`) — als root verweigert es den Dienst („Wrong user … 1000").
+
 ## 2.2.0
 
 - **Recovery-Smoke-Test (Wissen #751).** Neues Modul `smoke.py`: prüft nach dem
