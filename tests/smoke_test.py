@@ -93,6 +93,25 @@ check("POSITIV: Restore-Ziel = juengster Host (hostA#2)",
 check("POSITIV: reason leer", res["reason"] == "")
 cleanup(td, hf)
 
+# ── POSITIV-case: pc/-Dirs lowercase vs. hosts-Konfig Original-Schreibweise ───
+td = make_topdir({"ca-omv": [(1, int(NOW) - DAY)], "docker-a": [(1, int(NOW) - 2 * DAY)]})
+hf = make_hosts_file(["CA-OMV", "Docker-A"])  # gemischte Gross-/Kleinschreibung
+res = smoke.run_smoke(topdir=td, hosts_file=hf, now=NOW, runner=runner_ok)
+check("POSITIV-case: ok=True (case-insensitiv)", res["ok"] is True)
+check("POSITIV-case: hosts gruen", res["checks"]["hosts"]["ok"])
+cleanup(td, hf)
+
+# ── POSITIV-stale-mix: stillgelegter Host (alt) darf den Lauf NICHT kippen, ───
+#    solange das ueber ALLE Hosts juengste Backup aktuell ist.
+td = make_topdir({"active": [(5, int(NOW) - DAY)],
+                  "retired": [(1, int(NOW) - 300 * DAY)]})
+hf = make_hosts_file(["active", "retired"])
+res = smoke.run_smoke(topdir=td, hosts_file=hf, now=NOW, runner=runner_ok)
+check("POSITIV-stale-mix: ok=True (Gesamt-Neuestes aktuell)", res["ok"] is True)
+check("POSITIV-stale-mix: times gruen trotz altem retired-Host", res["checks"]["times"]["ok"])
+check("POSITIV-stale-mix: Restore-Ziel = aktiver Host", res["target"]["host"] == "active")
+cleanup(td, hf)
+
 # ── NEGATIV 1: konfigurierter Host ohne pc/-Sicherung ────────────────────────
 td = make_topdir({"hostA": [(1, int(NOW) - DAY)]})
 hf = make_hosts_file(["hostA", "hostB"])  # hostB fehlt in pc/
@@ -102,8 +121,8 @@ check("NEG-hosts: hosts rot", not res["checks"]["hosts"]["ok"])
 check("NEG-hosts: hostB im Grund", "hostB" in res["reason"])
 cleanup(td, hf)
 
-# ── NEGATIV 2: juengstes Backup zu alt ───────────────────────────────────────
-td = make_topdir({"hostA": [(1, int(NOW) - 90 * DAY)]})  # 90d > 30d Default
+# ── NEGATIV 2: Gesamt-Neuestes zu alt (Offsite-Kopie nicht aktuell) ──────────
+td = make_topdir({"hostA": [(1, int(NOW) - 90 * DAY)]})  # einziger Host, 90d > 30d
 hf = make_hosts_file(["hostA"])
 res = smoke.run_smoke(topdir=td, hosts_file=hf, now=NOW, runner=runner_ok)
 check("NEG-times: ok=False", res["ok"] is False)
