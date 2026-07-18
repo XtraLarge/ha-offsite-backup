@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 
@@ -29,6 +30,9 @@ import time
 DEFAULT_CONFIG_PL = "/etc/backuppc/config.pl"
 DEFAULT_HOSTS_FILE = "/etc/backuppc/hosts"
 DEFAULT_BPC_BIN = "/usr/local/BackupPC/bin"
+# BackupPC_tarCreate verweigert den Lauf als root ("Wrong user ... instead of
+# 1000") — es MUSS als der backuppc-User laufen (run.sh legt uid/gid 1000 an).
+BACKUPPC_USER = os.environ.get("SMOKE_BACKUPPC_USER", "backuppc")
 SMOKE_JSON = "/data/smoke.json"
 
 # Plausibilitaets-Fenster fuer den juengsten Backup-Zeitpunkt je Host.
@@ -113,7 +117,10 @@ def check_hosts(pc_hosts: list[str], conf_hosts: list[str]) -> dict:
     if not actual:
         return {"ok": False, "detail": "keine pc/-Hosts auf der Offsite-Kopie sichtbar",
                 "actual": actual, "expected": expected}
-    missing = [h for h in expected if h not in set(actual)]
+    # BackupPC legt pc/<host> kleingeschrieben an, die hosts-Konfig behaelt die
+    # Original-Schreibweise -> case-insensitiv vergleichen.
+    actual_lc = {h.lower() for h in actual}
+    missing = [h for h in expected if h.lower() not in actual_lc]
     if missing:
         return {"ok": False,
                 "detail": f"konfigurierte Hosts ohne Offsite-Sicherung: {', '.join(missing)}",
@@ -132,23 +139,35 @@ def check_times(backups_by_host: dict, now: float,
     problems: list[str] = []
     if not backups_by_host:
         return {"ok": False, "detail": "keine Backup-Historie vorhanden", "per_host": per_host}
+    ends = []
     for host, backups in sorted(backups_by_host.items()):
         if not backups:
             per_host[host] = {"num": None, "end": None, "age_days": None}
-            problems.append(f"{host}: keine Backups")
             continue
         latest = backups[-1]
         age_days = (now - latest["end"]) / 86400.0
         per_host[host] = {"num": latest["num"], "end": latest["end"],
                           "age_days": round(age_days, 2)}
+        ends.append(latest["end"])
+        # Zukunfts-Timestamps deuten auf Uhr-/Datenfehler -> immer rot.
         if latest["end"] - now > FUTURE_SKEW_SECS:
             problems.append(f"{host}: Backup-Ende in der Zukunft ({per_host[host]['age_days']}d)")
-        elif max_age_days > 0 and age_days > max_age_days:
-            problems.append(f"{host}: juengstes Backup zu alt ({per_host[host]['age_days']}d > {max_age_days}d)")
+    # Kern-Plausibilitaet: die Offsite-Kopie muss AKTUELL sein -> das ueber ALLE
+    # Hosts juengste Backup-Ende darf nicht zu alt sein. Einzelne veraltete Hosts
+    # (stillgelegte/offline Geraete) kippen den Lauf bewusst NICHT — das ist eine
+    # Quell-Host-Sache, keine Offsite-Integritaetsfrage.
+    if not ends:
+        return {"ok": False, "detail": "kein Host mit Backups", "per_host": per_host}
+    newest_age = round((now - max(ends)) / 86400.0, 2)
+    if max_age_days > 0 and newest_age > max_age_days:
+        problems.append(f"juengstes Offsite-Backup ueberhaupt zu alt ({newest_age}d > {max_age_days}d) "
+                        f"-> Offsite-Kopie nicht aktuell")
     if problems:
-        return {"ok": False, "detail": "; ".join(problems), "per_host": per_host}
-    return {"ok": True, "detail": f"{len(per_host)} Host(s) mit plausiblem juengsten Backup",
-            "per_host": per_host}
+        return {"ok": False, "detail": "; ".join(problems), "per_host": per_host,
+                "newest_age_days": newest_age}
+    return {"ok": True,
+            "detail": f"{len(ends)} Host(s) mit Backups; juengstes Offsite-Backup {newest_age}d alt",
+            "per_host": per_host, "newest_age_days": newest_age}
 
 
 def pick_restore_target(backups_by_host: dict) -> tuple[str | None, int | None]:
@@ -214,16 +233,16 @@ def restore_probe(pc_dir: str, host: str | None, num: int | None,
                 "bytes": 0, "host": host, "num": num}
     run = runner or _real_runner
     tar_create = os.path.join(bpc_bin, "BackupPC_tarCreate")
-    # -t = tar-Format an stdout; wir extrahieren via Shell-Pipe den ersten
-    # Datei-Inhalt. Der Runner kapselt die Pipe (Prod: tar -xO | head -c).
-    # tarCreate streamt den Share als tar; tar -xOf - schreibt die Datei-Inhalte
-    # auf stdout (busybox-kompatibel, stdin explizit via -f -), head -c bricht
-    # nach den ersten Bytes ab (SIGPIPE -> tarCreate endet frueh = leicht).
-    # tarCreate-stderr -> sh-stderr, damit der Runner den Grund erfassen kann.
-    argv = ["/bin/sh", "-c",
-            f'"{tar_create}" -h "$1" -n "$2" -s "$3" / 2>&2 '
-            f'| tar -xOf - 2>/dev/null | head -c 64',
-            "sh", host, str(num), share]
+    # BackupPC_tarCreate MUSS als backuppc-User laufen (verweigert als root).
+    # Der Share wird als tar gestreamt; tar -xOf - schreibt die Datei-Inhalte auf
+    # stdout (busybox-kompatibel, stdin explizit via -f -), head -c bricht nach den
+    # ersten Bytes ab (SIGPIPE -> tarCreate endet frueh = leicht). tarCreate-stderr
+    # -> stderr, damit der Runner den Grund erfassen kann. Werte via shlex gequotet
+    # (Injection-Schutz), da sie in einen su -c-String eingebettet werden.
+    inner = (f"{shlex.quote(tar_create)} -h {shlex.quote(host)} "
+             f"-n {shlex.quote(str(num))} -s {shlex.quote(share)} / 2>&2 "
+             f"| tar -xOf - 2>/dev/null | head -c 64")
+    argv = ["su", "-s", "/bin/sh", BACKUPPC_USER, "-c", inner]
     rc, out, err = run(argv)
     nbytes = len(out or b"")
     if nbytes >= 1:
