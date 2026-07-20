@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.1 - 2026-07-20
+
+### Behoben
+- MQTT-Statustopic (`offsite_backup/state`) publiziert jetzt `backup_started_at`.
+  Der Icinga-Check `check_offsite_backup` rechnete den STALLED-Age aus `last_run`
+  (letzter FERTIGER Lauf) statt aus dem Start des AKTUELLEN Laufs und meldete
+  dadurch waehrend jedes legitimen Laufs faelschlich `CRITICAL: STALLED >24h`
+  (#1627). Zusammen mit dem Check-Plugin-Fix (nutzt `backup_started_at`,
+  Fallback `last_run`) ist die Fehlklassifikation behoben.
+
 ## 1.7.0 - 2026-07-18
 
 ### Behoben / Neu

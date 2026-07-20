@@ -957,6 +957,7 @@ class MQTTClient:
             "last_run": status.get("last_run"),
             "next_run": get_next_run(),
             "backup_running": is_backup_running(),
+            "backup_started_at": _backup_started_at,
             "recovery_running": is_recovery_running(),
             "progress": get_progress(),
         }
