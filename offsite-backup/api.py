@@ -26,6 +26,7 @@ REMOTE_RUNDIR = "/dev/shm/offsite-backup"
 ABORT_MARKER = "/data/aborted-by-user"   # manueller Abbruch → kein Auto-Resume
 PERMANENT_FAIL_MARKER = "/data/permanent-fail"  # persistenter Stopp fuer Auto-Resume bei permanentem Fehlerbild (z.B. Offsite-Quota voll) – ueberlebt Container-Neustart/OOM
 PERMANENT_FAIL_MARKERS_TXT = ("disk quota exceeded", "quota exceeded", "no space left on device")
+BACKUP_STARTED_MARKER = "/data/backup-started-at"  # ISO-Startzeit des AKTUELLEN Laufs (persistent, ueberlebt Neustart); Quelle fuer MQTT/status backup_started_at (#1627/#840)
 # Watchdog / Auto-Resume
 STALL_SECS = 1800           # run.log seit >30 min ohne Aktivität → hängend
 RESUME_BACKOFF_SECS = 1800  # Wartezeit vor automatischer Wiederaufnahme (30 min)
@@ -205,6 +206,52 @@ def _classify_state(st):
     return "idle"
 
 
+# --- backup_started_at (Startzeitpunkt des laufenden NAS-Laufs) --------------
+# Der geplante Lauf wird NAS-seitig gestartet (kein Addon-Scheduler ruft
+# _run_backup), daher darf backup_started_at NICHT am _run_backup-Lebenszyklus
+# haengen. Ein persistenter Marker wird gesetzt, sobald der NAS-Lauf als laufend
+# erkannt wird, und geloescht, sobald er idle/crashed ist. So ist
+# backup_started_at fuer die GESAMTE Laufdauer und ueber ALLE Startpfade
+# (geplant/manuell/Auto-Resume) hinweg verfuegbar -> Basis fuer die korrekte
+# Icinga-Stall-Age-Berechnung (#1627/#840).
+_RUNNING_CLASSES = ("running", "stalled", "finished")
+
+
+def _set_backup_started_marker():
+    if os.path.exists(BACKUP_STARTED_MARKER):
+        return
+    try:
+        with open(BACKUP_STARTED_MARKER, "w") as f:
+            f.write(datetime.now(timezone.utc).isoformat())
+    except OSError:
+        pass
+
+
+def _clear_backup_started_marker():
+    try:
+        os.unlink(BACKUP_STARTED_MARKER)
+    except OSError:
+        pass
+
+
+def _sync_backup_started_marker(cls):
+    if cls in _RUNNING_CLASSES:
+        _set_backup_started_marker()
+    elif cls in ("idle", "crashed"):
+        _clear_backup_started_marker()
+    # "unknown" (NAS-SSH-Aussetzer): Marker unveraendert lassen, damit ein
+    # transienter Sondenfehler den echten Startzeitpunkt nicht verwirft.
+
+
+def get_backup_started_at():
+    """ISO-Startzeit des aktuell laufenden Laufs oder None (idle)."""
+    try:
+        with open(BACKUP_STARTED_MARKER) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
 def _nas_backup_state(force=False):
     """Eine kurz gecachte SSH-Sonde des NAS-Laufs, klassifiziert als
     idle | running | stalled | crashed | finished | unknown."""
@@ -217,6 +264,7 @@ def _nas_backup_state(force=False):
         cls = "running" if os.path.exists(BACKUP_LOCK) else "unknown"
         st = {"class": cls, "screen": False, "proc": False, "rundir": False,
               "exit": None, "age": -1, "reachable": False}
+        _sync_backup_started_marker(cls)
         _state_cache.update(ts=now, val=st)
         return st
     kv = dict(tok.split("=", 1) for tok in r.stdout.strip().splitlines()[-1].split())
@@ -229,6 +277,7 @@ def _nas_backup_state(force=False):
         "reachable": True,
     }
     st["class"] = _classify_state(st)
+    _sync_backup_started_marker(st["class"])
     _state_cache.update(ts=now, val=st)
     return st
 
@@ -361,7 +410,6 @@ def _compute_progress():
 
 
 _backup_proc = None
-_backup_started_at = None
 # Auto-Resume-Zustand: attempts = bisherige Wiederaufnahmen,
 # next_at = Unix-Zeit der nächsten Wiederaufnahme (0 = keine geplant, <0 = aufgegeben).
 _resume = {"attempts": 0, "next_at": 0.0}
@@ -436,15 +484,16 @@ def abort_backup():
 
 
 def _run_backup():
-    global _backup_proc, _backup_started_at
+    global _backup_proc
     open(BACKUP_LOCK, "w").close()
-    _backup_started_at = datetime.now(timezone.utc).isoformat()
+    # Sofort-Feedback bei manuellem Start; der NAS-State-Sync haelt den Marker
+    # danach ueber die gesamte (laenger als backup.sh laufende) NAS-Laufdauer.
+    _set_backup_started_marker()
     try:
         _backup_proc = subprocess.Popen(["/scripts/backup.sh"])
         _backup_proc.wait()
     finally:
         _backup_proc = None
-        _backup_started_at = None
         try:
             os.unlink(BACKUP_LOCK)
         except OSError:
@@ -957,7 +1006,7 @@ class MQTTClient:
             "last_run": status.get("last_run"),
             "next_run": get_next_run(),
             "backup_running": is_backup_running(),
-            "backup_started_at": _backup_started_at,
+            "backup_started_at": get_backup_started_at(),
             "recovery_running": is_recovery_running(),
             "progress": get_progress(),
         }
@@ -1273,7 +1322,7 @@ class Handler(BaseHTTPRequestHandler):
             s = read_status()
             s["backup_running"] = is_backup_running()
             s["backup_state"] = _nas_backup_state()["class"]
-            s["backup_started_at"] = _backup_started_at
+            s["backup_started_at"] = get_backup_started_at()
             s["recovery_running"] = is_recovery_running()
             s["next_run"] = get_next_run()
             s["progress"] = get_progress()

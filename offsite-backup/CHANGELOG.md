@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.2 - 2026-07-23
+
+### Behoben
+- `backup_started_at` wird jetzt aus dem authoritativen NAS-Run-State abgeleitet
+  (persistenter Marker `/data/backup-started-at`, gesetzt/geloescht ueber
+  `_nas_backup_state`/`is_backup_running`) statt aus dem `_run_backup`-Global.
+  URSACHE des Rueckfalls (#1627): der GEPLANTE Lauf wird NAS-seitig gestartet –
+  kein Addon-Scheduler ruft `_run_backup`, also blieb `backup_started_at` bei
+  geplanten Laeufen `null`. Das Icinga-Plugin fiel dadurch auf `last_run`
+  zurueck und meldete waehrend des Laufs 2026-07-22 20:00 erneut faelschlich
+  `CRITICAL: STALLED >24h` (`started=? run_age=56.96h`). Jetzt ist
+  `backup_started_at` fuer die gesamte Laufdauer und ueber ALLE Startpfade
+  (geplant/manuell/Auto-Resume) hinweg befuellt. Regressionstest:
+  `tests/backup_started_at_test.py`.
+
 ## 1.7.1 - 2026-07-20
 
 ### Behoben
