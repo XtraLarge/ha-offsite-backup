@@ -24,8 +24,12 @@ is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
 run_root() { if is_root; then "$@"; else sudo "$@"; fi; }
 
 : > "$RSYNC_LOG"
+# --mkpath (rsync >=3.2.3): legt fehlende Eltern-Pfadkomponenten des Ziels an.
+# Noetig fuer verschachtelte neue dests (z. B. ZPool/VMGuest, ZPool/PBS/NAS aus
+# #1054), deren Remote-Parent auf der Box noch nicht existiert; sonst scheitert
+# rsync mit mkdir ... failed: No such file or directory (code 11).
 RSYNC_OPTS=(
-  -aHAX -W --numeric-ids --delete-delay --max-alloc=4G
+  -aHAX -W --numeric-ids --mkpath --delete-delay --max-alloc=4G
   --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
   --log-file="$RSYNC_LOG" --log-file-format="%t %o %i %n%L"
 )
@@ -167,7 +171,7 @@ run_rsync_parallel() {
   # vor Löschung geschützt.
   echo "$(date '+%F %T'): Struktur-Pass (Tiefe ≤2) …"
   local skel_opts=(
-    -aHAX -W --numeric-ids --max-alloc=4G --chmod=Fo-x
+    -aHAX -W --numeric-ids --mkpath --max-alloc=4G --chmod=Fo-x
     --timeout="$RSYNC_IO_TIMEOUT" --info=none --stats
     --delete -f '- /*/*/**'
   )
