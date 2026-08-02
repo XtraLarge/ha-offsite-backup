@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.7.3 - 2026-08-02
+
+### Behoben/Neu
+- `--mkpath` im Offsite-rsync (`scripts/backup_nas.sh`, sowohl `RSYNC_OPTS` als
+  auch der Parallel-`skel_opts`): rsync legt jetzt fehlende Eltern-Pfad-
+  komponenten des Ziels auf der Hetzner-Box selbst an. Noetig fuer NEUE
+  verschachtelte `backup_sources`-dests, deren Remote-Parent noch nicht
+  existiert (z. B. `ZPool/VMGuest`, `ZPool/PBS/NAS` aus #1054). Ohne --mkpath
+  scheiterte der Lauf 2026-08-01 reproduzierbar mit `mkdir
+  "/home/ZPool/VMGuest/VMBackup" failed: No such file or directory` (rsync
+  error code 11). --mkpath gibt es ab rsync 3.2.3 (nas-Sender 3.4.1,
+  Box-Receiver 3.2.7 — beide unterstuetzen es). Regressionstest (positiv +
+  Kontroll-negativ): `tests/rsync_mkpath_test.sh`.
+
 ## 1.7.2 - 2026-07-23
 
 ### Behoben
