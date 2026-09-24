@@ -9,6 +9,8 @@ import threading
 import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import ssl
+import urllib.parse
 import urllib.request
 
 PORT = 8099
@@ -961,6 +963,127 @@ def get_offsite_box_info(force=False):
     return result, None
 
 
+
+# ── PBS/PVE Recovery API ──────────────────────────────────────────────────────
+
+def _proxmox_api(base_url, auth_header, method, path, body=None, timeout=20):
+    """Generischer Proxmox/PBS API Call – self-signed TLS wird akzeptiert."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    url = base_url.rstrip("/") + path
+    headers = dict(auth_header)
+    data = None
+    if body:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as r:
+            return json.loads(r.read()), None
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode(errors="replace")[:300]
+        return None, f"HTTP {e.code}: {msg}"
+    except Exception as e:
+        return None, str(e)
+
+
+def _pbs_api(method, path, body=None):
+    """PBS API Call gegen konfigurierten PBS-Server."""
+    opts = read_options()
+    host = opts.get("pbs_server_host", "")
+    port = int(opts.get("pbs_server_port", 8007))
+    token = opts.get("pbs_api_token", "")
+    if not host or not token:
+        return None, "PBS nicht konfiguriert (pbs_server_host/pbs_api_token fehlt)"
+    return _proxmox_api(
+        f"https://{host}:{port}",
+        {"Authorization": f"PBSAPIToken={token}"},
+        method, path, body,
+    )
+
+
+def _pve_api(method, path, body=None):
+    """PVE API Call gegen konfigurierten PVE-Host."""
+    opts = read_options()
+    host = opts.get("pve_host", "")
+    token = opts.get("pve_api_token", "")
+    if not host or not token:
+        return None, "PVE nicht konfiguriert (pve_host/pve_api_token fehlt)"
+    return _proxmox_api(
+        f"https://{host}:8006",
+        {"Authorization": f"PVEAPIToken={token}"},
+        method, path, body,
+    )
+
+
+_PBS_SNAP_CACHE = {"data": None, "ts": 0.0}
+_PBS_SNAP_TTL = 120.0  # 2 Minuten
+
+
+def get_pbs_snapshots(force=False):
+    """Listet Snapshots aus PBS-Datastore/Namespace — gecacht 2 min."""
+    global _PBS_SNAP_CACHE
+    now = time.time()
+    if (not force and _PBS_SNAP_CACHE["data"] is not None
+            and (now - _PBS_SNAP_CACHE["ts"]) < _PBS_SNAP_TTL):
+        return _PBS_SNAP_CACHE["data"], None
+    opts = read_options()
+    store = opts.get("pbs_datastore", "NAS") or "NAS"
+    ns = opts.get("pbs_namespace", "") or ""
+    qs = f"?ns={urllib.parse.quote(ns)}" if ns else ""
+    data, err = _pbs_api("GET", f"/api2/json/admin/datastore/{store}/snapshots{qs}")
+    if err:
+        return None, err
+    snaps = data.get("data") or []
+    result = []
+    for s in snaps:
+        bt = s.get("backup-time", 0)
+        result.append({
+            "backup_type": s.get("backup-type", ""),
+            "backup_id":   s.get("backup-id", ""),
+            "backup_time": bt,
+            "backup_time_iso": datetime.fromtimestamp(bt).isoformat() if bt else "",
+            "size":        s.get("size", 0),
+            "protected":   bool(s.get("protected", False)),
+        })
+    result.sort(key=lambda x: x["backup_time"], reverse=True)
+    _PBS_SNAP_CACHE = {"data": result, "ts": now}
+    return result, None
+
+
+def restore_from_pbs(backup_type, backup_id, backup_time_ts,
+                     pve_node, target_storage, target_vmid=None):
+    """Startet Restore-Job PBS → PVE.
+    Gibt UPID (Task-ID) zurück oder (None, Fehlermeldung)."""
+    opts = read_options()
+    pbs_storage = opts.get("pbs_pve_storage_name", "PBS-GVMHP") or "PBS-GVMHP"
+    dt_str = datetime.fromtimestamp(int(backup_time_ts)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    archive = f"{pbs_storage}:{backup_type}/{backup_id}/{dt_str}"
+    vm_id = int(target_vmid) if target_vmid else int(backup_id)
+    if backup_type == "vm":
+        endpoint = f"/api2/json/nodes/{pve_node}/qemu"
+        payload = {"vmid": vm_id, "restore": 1,
+                   "storage": target_storage, "archive": archive}
+    else:
+        endpoint = f"/api2/json/nodes/{pve_node}/lxc"
+        payload = {"vmid": vm_id, "restore": 1,
+                   "storage": target_storage, "ostemplate": archive}
+    data, err = _pve_api("POST", endpoint, payload)
+    if err:
+        return None, err
+    return data.get("data"), None  # UPID
+
+
+def get_pve_task_status(pve_node, upid):
+    """Pollt den Status eines PVE Task (UPID)."""
+    encoded = urllib.parse.quote(upid, safe="")
+    data, err = _pve_api("GET", f"/api2/json/nodes/{pve_node}/tasks/{encoded}/status")
+    if err:
+        return None, err
+    return data.get("data", {}), None
+
+
 class MQTTClient:
     DEVICE = {
         "identifiers": ["offsite_backup"],
@@ -1248,6 +1371,39 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
+  <!-- Karte 4: PBS Recovery -->
+  <div class="card" id="pbs-recovery-card">
+    <div class="card-header">
+      <h2>PBS Recovery</h2>
+      <button class="btn-icon" onclick="loadPbsSnapshots(true)" title="Aktualisieren">&#8635;</button>
+    </div>
+    <p style="font-size:.85rem;color:#666;margin-bottom:.75rem">
+      Snapshots aus PBS-Datastore &mdash; direkte Wiederherstellung auf PVE via API.
+    </p>
+    <div id="pbs-snap-container">
+      <span style="color:#999;font-size:.88rem">Lade&#8230;</span>
+    </div>
+    <div id="pbs-restore-form" style="display:none;margin-top:.75rem;padding:.75rem;background:#f9f9f9;border-radius:6px">
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:.5rem" id="pbs-restore-label"></div>
+      <div style="display:grid;gap:.4rem">
+        <div class="row"><span class="label">PVE Node</span>
+          <input id="pbs-pve-node" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="gvmhp">
+        </div>
+        <div class="row"><span class="label">Target Storage</span>
+          <input id="pbs-target-stor" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="local-lvm">
+        </div>
+        <div class="row"><span class="label">Ziel-VMID</span>
+          <input id="pbs-target-vmid" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="leer = Original-ID">
+        </div>
+      </div>
+      <div class="actions" style="margin-top:.6rem">
+        <button class="btn-success" onclick="startPbsRestore()">&#9654; Restore starten</button>
+        <button class="btn-secondary" onclick="closePbsRestoreForm()">&#10005; Abbrechen</button>
+      </div>
+      <div id="pbs-restore-result" style="margin-top:.5rem;font-size:.85rem"></div>
+    </div>
+  </div>
+
   <!-- Karte 4: Log -->
   <div class="card">
     <div class="card-header">
@@ -1418,6 +1574,101 @@ function openRecoveryUI() {
   if (url) window.open(url, '_blank');
 }
 
+let _pbsRestoreSelection = null;
+
+async function loadPbsSnapshots(force) {
+  const container = document.getElementById('pbs-snap-container');
+  if (!container) return;
+  try {
+    const url = base + '/api/recovery/pbs/snapshots' + (force ? '?force=1' : '');
+    const d = await fetch(url).then(r => r.json());
+    if (d.error) { container.innerHTML = '<span style="color:var(--err)">' + d.error + '</span>'; return; }
+    const snaps = d.snapshots || [];
+    if (!snaps.length) { container.innerHTML = '<span style="color:#999">Keine Snapshots gefunden.</span>'; return; }
+    // Gruppieren nach backup_type/backup_id
+    const groups = {};
+    snaps.forEach(function(s) {
+      const key = s.backup_type + '/' + s.backup_id;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(s);
+    });
+    let html = '<table style="width:100%;font-size:.82rem;border-collapse:collapse">';
+    html += '<thead><tr style="color:#888;border-bottom:1px solid #eee">'
+          + '<th style="text-align:left;padding:.2rem .4rem">VM/CT</th>'
+          + '<th style="text-align:left;padding:.2rem .4rem">Typ</th>'
+          + '<th style="text-align:left;padding:.2rem .4rem">Datum</th>'
+          + '<th style="text-align:right;padding:.2rem .4rem">Größe</th>'
+          + '<th style="padding:.2rem .4rem"></th>'
+          + '</tr></thead><tbody>';
+    Object.keys(groups).sort().forEach(function(key) {
+      groups[key].forEach(function(s, i) {
+        const dt = s.backup_time_iso ? new Date(s.backup_time_iso).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+        const sz = s.size ? (s.size / 1024 / 1024 / 1024).toFixed(1) + ' GB' : '—';
+        const rowKey = JSON.stringify(s).replace(/"/g, '&quot;');
+        html += '<tr style="border-bottom:1px solid #f5f5f5">'
+              + '<td style="padding:.2rem .4rem;font-weight:' + (i===0?'600':'400') + '">' + (i===0 ? s.backup_id : '') + '</td>'
+              + '<td style="padding:.2rem .4rem;color:#888">' + s.backup_type + '</td>'
+              + '<td style="padding:.2rem .4rem">' + dt + '</td>'
+              + '<td style="padding:.2rem .4rem;text-align:right;color:#888">' + sz + '</td>'
+              + '<td style="padding:.2rem .4rem;text-align:right"><button class="btn-secondary" style="padding:.2rem .5rem;font-size:.78rem" onclick="openPbsRestoreForm(' + rowKey + ')">Restore</button></td>'
+              + '</tr>';
+      });
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch(e) { container.innerHTML = '<span style="color:var(--err)">Fehler: ' + e + '</span>'; }
+}
+
+function openPbsRestoreForm(snap) {
+  _pbsRestoreSelection = snap;
+  const form = document.getElementById('pbs-restore-form');
+  const label = document.getElementById('pbs-restore-label');
+  if (!form || !label) return;
+  const dt = snap.backup_time_iso ? new Date(snap.backup_time_iso).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  label.textContent = 'Restore: ' + snap.backup_type + '/' + snap.backup_id + ' vom ' + dt;
+  document.getElementById('pbs-restore-result').textContent = '';
+  document.getElementById('pbs-pve-node').value = document.getElementById('pbs-pve-node').value || 'gvmhp';
+  form.style.display = 'block';
+}
+
+function closePbsRestoreForm() {
+  const form = document.getElementById('pbs-restore-form');
+  if (form) form.style.display = 'none';
+  _pbsRestoreSelection = null;
+}
+
+async function startPbsRestore() {
+  if (!_pbsRestoreSelection) return;
+  const node = document.getElementById('pbs-pve-node').value.trim();
+  const stor = document.getElementById('pbs-target-stor').value.trim();
+  const tvmid = document.getElementById('pbs-target-vmid').value.trim() || null;
+  if (!node || !stor) { showMsg('PVE Node und Target Storage sind Pflichtfelder', 4000); return; }
+  const resultEl = document.getElementById('pbs-restore-result');
+  resultEl.innerHTML = '<span class="spinner"></span> Restore wird gestartet...';
+  try {
+    const d = await fetch(base + '/api/recovery/pbs/restore', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        backup_type: _pbsRestoreSelection.backup_type,
+        backup_id: _pbsRestoreSelection.backup_id,
+        backup_time: _pbsRestoreSelection.backup_time,
+        pve_node: node,
+        target_storage: stor,
+        target_vmid: tvmid,
+      }),
+    }).then(r => r.json());
+    if (d.ok) {
+      resultEl.innerHTML = '<span style="color:var(--ok)">&#10003; Restore gestartet. Task: <code>' + (d.upid || '—') + '</code></span>';
+    } else {
+      resultEl.innerHTML = '<span style="color:var(--err)">&#10005; ' + (d.message || 'Fehler') + '</span>';
+    }
+  } catch(e) {
+    resultEl.innerHTML = '<span style="color:var(--err)">&#10005; ' + e + '</span>';
+  }
+}
+
+loadPbsSnapshots(false);
 loadStatus(); loadLog(); loadOffsiteInfo();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
@@ -1432,6 +1683,7 @@ _API_ROUTES = (
     "/api/recovery/start", "/api/recovery/stop",
     "/api/status", "/api/options", "/api/log", "/api/backups",
     "/api/backup/abort", "/api/backup", "/api/offsite_info",
+    "/api/recovery/pbs/snapshots", "/api/recovery/pbs/restore", "/api/recovery/pbs/task",
 )
 
 
@@ -1484,6 +1736,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 500)
             else:
                 self._json(data)
+        elif path == "/api/recovery/pbs/snapshots":
+            data, err = get_pbs_snapshots(force="force" in self.path)
+            if err:
+                self._json({"error": err}, 500)
+            else:
+                self._json({"snapshots": data})
         else:
             self._json({"error": "Not found"}, 404)
 
@@ -1505,6 +1763,32 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/recovery/stop":
             ok_flag, msg = trigger_recovery("stop")
             self._json({"ok": ok_flag, "message": msg})
+        elif path == "/api/recovery/pbs/restore":
+            btype  = body.get("backup_type", "vm")
+            bid    = body.get("backup_id", "")
+            btime  = body.get("backup_time", 0)
+            node   = body.get("pve_node", "")
+            stor   = body.get("target_storage", "")
+            tvmid  = body.get("target_vmid")
+            if not bid or not node or not stor:
+                self._json({"ok": False, "message": "backup_id, pve_node, target_storage fehlen"}, 400)
+                return
+            upid, err = restore_from_pbs(btype, bid, btime, node, stor, tvmid)
+            if err:
+                self._json({"ok": False, "message": err}, 500)
+            else:
+                self._json({"ok": True, "upid": upid})
+        elif path == "/api/recovery/pbs/task":
+            node = body.get("pve_node", "")
+            upid = body.get("upid", "")
+            if not node or not upid:
+                self._json({"ok": False, "message": "pve_node und upid fehlen"}, 400)
+                return
+            status, err = get_pve_task_status(node, upid)
+            if err:
+                self._json({"ok": False, "message": err}, 500)
+            else:
+                self._json({"ok": True, "status": status})
         else:
             self._json({"error": "Not found"}, 404)
 
