@@ -22,7 +22,8 @@ RUNS_KEEP = 20
 STATUS_FILE = "/data/logs/status.json"
 BACKUP_LOCK = "/tmp/backup-running"
 SECRETS_DIR = "/data/secrets"
-NAS_KEY = SECRETS_DIR + "/id_ed25519_storage"
+NAS_KEY     = SECRETS_DIR + "/id_ed25519_storage"
+OFFSITE_KEY = SECRETS_DIR + "/id_ed25519_offsite"
 SCREEN_NAME = "offsite-backup"
 REMOTE_RUNDIR = "/dev/shm/offsite-backup"
 ABORT_MARKER = "/data/aborted-by-user"   # manueller Abbruch → kein Auto-Resume
@@ -1022,32 +1023,66 @@ _PBS_SNAP_TTL = 120.0  # 2 Minuten
 
 
 def get_pbs_snapshots(force=False):
-    """Listet Snapshots aus PBS-Datastore/Namespace — gecacht 2 min."""
+    """Listet PBS-Snapshots via SSH-Verzeichnis-Listing auf Hetzner — gecacht 2 min.
+    Liest die Verzeichnisstruktur <offsite_path>/ZPool/PBS/NAS/<namespace>/{vm,ct}/<id>/<time>/
+    direkt aus dem Hetzner Storage Box ohne PBS-API."""
     global _PBS_SNAP_CACHE
     now = time.time()
     if (not force and _PBS_SNAP_CACHE["data"] is not None
             and (now - _PBS_SNAP_CACHE["ts"]) < _PBS_SNAP_TTL):
         return _PBS_SNAP_CACHE["data"], None
     opts = read_options()
-    store = opts.get("pbs_datastore", "NAS") or "NAS"
-    ns = opts.get("pbs_namespace", "") or ""
-    qs = f"?ns={urllib.parse.quote(ns)}" if ns else ""
-    data, err = _pbs_api("GET", f"/api2/json/admin/datastore/{store}/snapshots{qs}")
-    if err:
-        return None, err
-    snaps = data.get("data") or []
+    host = opts.get("offsite_host", "")
+    user = opts.get("offsite_user", "")
+    port = int(opts.get("offsite_port", 23))
+    base = opts.get("offsite_path", "/home")
+    ns   = opts.get("pbs_namespace", "GVMHP") or "GVMHP"
+    if not host or not user or not os.path.exists(OFFSITE_KEY):
+        return None, "Offsite-Verbindung nicht konfiguriert (offsite_host/user/key fehlt)"
+    pbs_base = f"{base}/ZPool/PBS/NAS/{ns}"
+    # Alle Snapshot-Verzeichnisse in einem Zug listen
+    remote_cmd = (
+        f"find '{pbs_base}/vm' '{pbs_base}/ct' "
+        f"-maxdepth 2 -mindepth 2 -type d 2>/dev/null | sort"
+    )
+    cmd = [
+        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=15",
+        "-i", OFFSITE_KEY, "-p", str(port),
+        f"{user}@{host}", remote_cmd,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        return None, f"SSH-Fehler: {e}"
+    if r.returncode not in (0, 1):  # 1 = find: Teilverzeichnis fehlt (ct/ oder vm/ leer)
+        return None, f"SSH rc={r.returncode}: {r.stderr.strip()[:200]}"
     result = []
-    for s in snaps:
-        bt = s.get("backup-time", 0)
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Beispiel: /home/ZPool/PBS/NAS/GVMHP/vm/100/2026-09-21T00:00:00Z
+        parts = line.split("/")
+        if len(parts) < 3:
+            continue
+        btime_str = parts[-1]   # 2026-09-21T00:00:00Z
+        bid       = parts[-2]   # 100
+        btype     = parts[-3]   # vm oder ct
+        try:
+            dt = datetime.fromisoformat(btime_str.replace("Z", "+00:00"))
+            bt = int(dt.timestamp())
+        except ValueError:
+            continue
         result.append({
-            "backup_type": s.get("backup-type", ""),
-            "backup_id":   s.get("backup-id", ""),
-            "backup_time": bt,
-            "backup_time_iso": datetime.fromtimestamp(bt).isoformat() if bt else "",
-            "size":        s.get("size", 0),
-            "protected":   bool(s.get("protected", False)),
+            "backup_type":     btype,
+            "backup_id":       bid,
+            "backup_time":     bt,
+            "backup_time_iso": btime_str,
+            "size":            0,
+            "protected":       False,
         })
-    result.sort(key=lambda x: x["backup_time"], reverse=True)
+    result.sort(key=lambda x: (x["backup_type"], x["backup_id"], x["backup_time"]), reverse=True)
     _PBS_SNAP_CACHE = {"data": result, "ts": now}
     return result, None
 
