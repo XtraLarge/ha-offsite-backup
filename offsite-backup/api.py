@@ -921,8 +921,9 @@ def get_offsite_box_info(force=False):
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             sb = json.loads(resp.read()).get("storage_box", {})
-        disk_used_mb  = int(sb.get("disk_used",  0) or 0)
-        disk_quota_mb = int(sb.get("disk_quota", 0) or 0)
+        # Hetzner Cloud API: stats.size = Gesamtbelegung (Bytes), storage_box_type.size = Kapazität (Bytes)
+        disk_used_mb  = int((sb.get("stats") or {}).get("size",  0) or 0) // (1024 * 1024)
+        disk_quota_mb = int((sb.get("storage_box_type") or {}).get("size", 0) or 0) // (1024 * 1024)
     except Exception as e:
         log.warning("Hetzner Box-Info nicht abrufbar: %s", e)
 
