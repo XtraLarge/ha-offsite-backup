@@ -887,6 +887,79 @@ def list_snapshots():
         return None, str(e)
 
 
+
+_offsite_info_cache = {"data": None, "ts": 0.0}
+_OFFSITE_CACHE_TTL = 300   # 5 Minuten
+
+
+def get_offsite_box_info(force=False):
+    """Hetzner Storage-Box: Platz + eigene Snapshot-Zähler — gecacht 5 min."""
+    global _offsite_info_cache
+    now = time.time()
+    if (not force and _offsite_info_cache["data"] is not None
+            and (now - _offsite_info_cache["ts"]) < _OFFSITE_CACHE_TTL):
+        return _offsite_info_cache["data"], None
+
+    try:
+        with open("/data/secrets/offsite_token") as f:
+            token = f.read().strip()
+    except Exception:
+        return None, "offsite_token nicht gefunden"
+
+    opts = read_options()
+    box_id = opts.get("offsite_box_id", "")
+    if not box_id:
+        return None, "offsite_box_id nicht konfiguriert"
+    snapshot_keep = int(opts.get("offsite_snapshot_keep", 20) or 20)
+
+    # Platz-Info über Storage-Box-Endpunkt
+    disk_used_mb = disk_quota_mb = 0
+    try:
+        req = urllib.request.Request(
+            f"https://api.hetzner.com/v1/storage_boxes/{box_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            sb = json.loads(resp.read()).get("storage_box", {})
+        disk_used_mb  = int(sb.get("disk_used",  0) or 0)
+        disk_quota_mb = int(sb.get("disk_quota", 0) or 0)
+    except Exception as e:
+        log.warning("Hetzner Box-Info nicht abrufbar: %s", e)
+
+    # Snapshot-Liste — nur eigene (Beschreibung beginnt mit "Snap_")
+    snaps = []
+    own_count = 0
+    try:
+        req = urllib.request.Request(
+            f"https://api.hetzner.com/v1/storage_boxes/{box_id}/snapshots",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            all_snaps = json.loads(resp.read()).get("snapshots", [])
+        own = sorted(
+            [s for s in all_snaps if (s.get("description") or "").startswith("Snap_")],
+            key=lambda s: s.get("created", ""), reverse=True,
+        )
+        snaps = [{"name": s.get("name", ""), "created": s.get("created", ""),
+                  "description": s.get("description", "")} for s in own]
+        own_count = len(own)
+    except Exception as e:
+        log.warning("Hetzner Snapshot-Liste nicht abrufbar: %s", e)
+
+    result = {
+        "disk_used_mb":  disk_used_mb,
+        "disk_quota_mb": disk_quota_mb,
+        "disk_used_gb":  round(disk_used_mb  / 1024, 1) if disk_quota_mb else None,
+        "disk_quota_gb": round(disk_quota_mb / 1024, 1) if disk_quota_mb else None,
+        "disk_pct":      round(disk_used_mb / disk_quota_mb * 100, 1) if disk_quota_mb else None,
+        "snapshot_count": own_count,
+        "snapshot_keep":  snapshot_keep,
+        "snapshots": snaps,
+    }
+    _offsite_info_cache = {"data": result, "ts": now}
+    return result, None
+
+
 class MQTTClient:
     DEVICE = {
         "identifiers": ["offsite_backup"],
@@ -1144,7 +1217,24 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
-  <!-- Karte 2: BackupPC Recovery Umgebung -->
+
+  <!-- Karte 2: Offsite (Hetzner) -->
+  <div class="card" id="offsite-card">
+    <div class="card-header">
+      <h2>Offsite (Hetzner)</h2>
+      <button class="btn-icon" onclick="loadOffsiteInfo(true)" title="Aktualisieren">&#8635;</button>
+    </div>
+    <div class="row"><span class="label">Belegung</span><span id="offsite-disk">&#8230;</span></div>
+    <div class="row"><span class="label">Kopien</span><span id="offsite-snaps">&#8230;</span></div>
+    <div id="offsite-snap-list" style="margin-top:.4rem;display:none">
+      <table style="width:100%;font-size:.82rem;border-collapse:collapse" id="offsite-snap-table"></table>
+    </div>
+    <div class="actions" style="margin-top:.5rem">
+      <button class="btn-secondary" id="offsite-toggle-btn" onclick="toggleSnapList()">&#9658; Snapshots anzeigen</button>
+    </div>
+  </div>
+
+  <!-- Karte 3: BackupPC Recovery Umgebung -->
   <div class="card">
     <div class="card-header"><h2>BackupPC Recovery Umgebung</h2></div>
     <p style="font-size:.88rem;color:#666;margin-bottom:.75rem">
@@ -1157,7 +1247,7 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
-  <!-- Karte 3: Log -->
+  <!-- Karte 4: Log -->
   <div class="card">
     <div class="card-header">
       <h2>Log (letzte 100 Zeilen)</h2>
@@ -1278,14 +1368,59 @@ async function triggerRecovery(action) {
   setTimeout(loadStatus, 2000);
 }
 
+async function loadOffsiteInfo(showFeedback) {
+  if (showFeedback === undefined) showFeedback = false;
+  try {
+    const d = await fetch(base + '/api/offsite_info').then(r => r.json());
+    const diskEl = document.getElementById('offsite-disk');
+    const snapsEl = document.getElementById('offsite-snaps');
+    if (d.error) { if (diskEl) diskEl.textContent = 'Fehler: ' + d.error; return; }
+    if (diskEl) {
+      const used  = d.disk_used_gb  != null ? d.disk_used_gb  + ' GB' : '?';
+      const total = d.disk_quota_gb != null ? d.disk_quota_gb + ' GB' : '?';
+      const pct   = d.disk_pct      != null ? ' (' + d.disk_pct + ' %)' : '';
+      diskEl.textContent = used + ' / ' + total + pct;
+    }
+    if (snapsEl) {
+      const keep = d.snapshot_keep  != null ? d.snapshot_keep  : '?';
+      const cnt  = d.snapshot_count != null ? d.snapshot_count : '?';
+      snapsEl.textContent = cnt + ' / ' + keep + ' (konfiguriert)';
+    }
+    const tbl = document.getElementById('offsite-snap-table');
+    if (tbl) {
+      tbl.innerHTML = '';
+      (d.snapshots || []).forEach(function(s) {
+        var tr = document.createElement('tr');
+        var created = s.created
+          ? new Date(s.created).toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'})
+          : '&mdash;';
+        tr.innerHTML = '<td style="padding:.15rem .4rem;color:#888;white-space:nowrap">' + created + '</td>'
+                     + '<td style="padding:.15rem .4rem">' + (s.description || s.name || '&mdash;') + '</td>';
+        tbl.appendChild(tr);
+      });
+    }
+    if (showFeedback) showMsg('Aktualisiert', 1500);
+  } catch(e) { console.error('loadOffsiteInfo:', e); }
+}
+
+function toggleSnapList() {
+  var div = document.getElementById('offsite-snap-list');
+  var btn = document.getElementById('offsite-toggle-btn');
+  if (!div || !btn) return;
+  var visible = div.style.display !== 'none';
+  div.style.display = visible ? 'none' : 'block';
+  btn.innerHTML = visible ? '&#9658; Snapshots anzeigen' : '&#9660; Snapshots verbergen';
+}
+
 function openRecoveryUI() {
   const url = document.getElementById('recovery-open-btn').dataset.url;
   if (url) window.open(url, '_blank');
 }
 
-loadStatus(); loadLog();
+loadStatus(); loadLog(); loadOffsiteInfo();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
+setInterval(function() { loadOffsiteInfo(false); }, 300000);
 </script>
 </body>
 </html>
@@ -1295,7 +1430,7 @@ setInterval(() => loadLog(false), 30000);
 _API_ROUTES = (
     "/api/recovery/start", "/api/recovery/stop",
     "/api/status", "/api/options", "/api/log", "/api/backups",
-    "/api/backup/abort", "/api/backup",
+    "/api/backup/abort", "/api/backup", "/api/offsite_info",
 )
 
 
@@ -1338,6 +1473,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"lines": get_log_lines()})
         elif path == "/api/backups":
             data, err = list_snapshots()
+            if err:
+                self._json({"error": err}, 500)
+            else:
+                self._json(data)
+        elif path == "/api/offsite_info":
+            data, err = get_offsite_box_info()
             if err:
                 self._json({"error": err}, 500)
             else:

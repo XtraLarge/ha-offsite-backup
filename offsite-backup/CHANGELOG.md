@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8.0 - 2026-09-24
+
+### Neu
+- Dashboard: neue Karte "Offsite (Hetzner)" zeigt belegten Platz der Storage Box
+  (used / quota in GB + Prozent) sowie Anzahl eigener Backup-Snapshots ggue.
+  dem konfigurierten Limit (`offsite_snapshot_keep`). Aufklappbare Snapshot-Liste
+  (Datum + Beschreibung) ueber den "Snapshots anzeigen"-Button.
+- API: neuer Endpunkt `GET /api/offsite_info` — fragt Hetzner-REST-API ab
+  (Box-Details + Snapshot-Liste), filtert eigene Snapshots (Prefix "Snap_"),
+  gecacht 5 Minuten (kein Request-Spam beim Dashboard-Refresh).
+- Retention (`offsite_snapshot_keep`, Standard 20) war bereits in `backup_nas.sh`
+  implementiert; wird nun im Dashboard sichtbar neben der aktuellen Anzahl.
+
+
 ## 1.7.3 - 2026-08-02
 
 ### Behoben/Neu
