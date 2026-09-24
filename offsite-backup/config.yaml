@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.10.2"
+version: "1.11.0"
 slug: offsite_backup
 description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -35,6 +35,13 @@ options:
   pbs_datastore: "NAS"
   pbs_namespace: "GVMHP"
   pbs_pve_storage_name: "PBS-GVMHP"
+  pbs_lxc_vmid: 901
+  pbs_lxc_pve_node: "nas"
+  pbs_lxc_os_storage: "local-lvm"
+  pbs_lxc_data_zfs_dataset: "ZPool/PBS-recovered"
+  pbs_lxc_hetzner_pbs_path: "ZPool/PBS"
+  pbs_lxc_hetzner_dump_path: "ZPool/VMGuest/VMBackup/dump"
+  nas_hetzner_key: "/root/offsite-restore/id_ed25519_restore"
   pve_host: "10.10.4.10"
   pve_api_token: ""
   auto_resume_backup: true
@@ -116,6 +123,13 @@ schema:
   pbs_datastore: str
   pbs_namespace: str
   pbs_pve_storage_name: str
+  pbs_lxc_vmid: int
+  pbs_lxc_pve_node: str
+  pbs_lxc_os_storage: str
+  pbs_lxc_data_zfs_dataset: str
+  pbs_lxc_hetzner_pbs_path: str
+  pbs_lxc_hetzner_dump_path: str
+  nas_hetzner_key: str
   pve_host: str
   pve_api_token: password
   auto_resume_backup: bool
