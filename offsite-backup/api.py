@@ -1023,9 +1023,9 @@ _PBS_SNAP_TTL = 120.0  # 2 Minuten
 
 
 def get_pbs_snapshots(force=False):
-    """Listet PBS-Snapshots via SSH-Verzeichnis-Listing auf Hetzner — gecacht 2 min.
-    Liest die Verzeichnisstruktur <offsite_path>/ZPool/PBS/NAS/<namespace>/{vm,ct}/<id>/<time>/
-    direkt aus dem Hetzner Storage Box ohne PBS-API."""
+    """Listet PBS-Snapshots via rsync --list-only auf Hetzner — gecacht 2 min.
+    Pfad: <offsite_path>/ZPool/PBS/NAS/ns/<namespace>/{vm,ct}/<id>/<timestamp>/
+    Hetzner Storage Box hat restricted shell (kein find/ls), rsync ist erlaubt."""
     global _PBS_SNAP_CACHE
     now = time.time()
     if (not force and _PBS_SNAP_CACHE["data"] is not None
@@ -1039,49 +1039,55 @@ def get_pbs_snapshots(force=False):
     ns   = opts.get("pbs_namespace", "GVMHP") or "GVMHP"
     if not host or not user or not os.path.exists(OFFSITE_KEY):
         return None, "Offsite-Verbindung nicht konfiguriert (offsite_host/user/key fehlt)"
-    pbs_base = f"{base}/ZPool/PBS/NAS/{ns}"
-    # Alle Snapshot-Verzeichnisse in einem Zug listen
-    remote_cmd = (
-        f"find '{pbs_base}/vm' '{pbs_base}/ct' "
-        f"-maxdepth 2 -mindepth 2 -type d 2>/dev/null | sort"
-    )
-    cmd = [
-        "ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=15",
-        "-i", OFFSITE_KEY, "-p", str(port),
-        f"{user}@{host}", remote_cmd,
-    ]
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    except Exception as e:
-        return None, f"SSH-Fehler: {e}"
-    if r.returncode not in (0, 1):  # 1 = find: Teilverzeichnis fehlt (ct/ oder vm/ leer)
-        return None, f"SSH rc={r.returncode}: {r.stderr.strip()[:200]}"
+    # PBS-Namespaces liegen unter ns/ innerhalb des Datastores
+    pbs_base = f"{base}/ZPool/PBS/NAS/ns/{ns}"
+    ssh_opt = (f"ssh -p {port} -i {OFFSITE_KEY} "
+               f"-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15")
     result = []
-    for line in r.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Beispiel: /home/ZPool/PBS/NAS/GVMHP/vm/100/2026-09-21T00:00:00Z
-        parts = line.split("/")
-        if len(parts) < 3:
-            continue
-        btime_str = parts[-1]   # 2026-09-21T00:00:00Z
-        bid       = parts[-2]   # 100
-        btype     = parts[-3]   # vm oder ct
+    errors = []
+    for btype in ("vm", "ct"):
+        cmd = [
+            "rsync", "-e", ssh_opt,
+            "--list-only", "-r",
+            f"{user}@{host}:{pbs_base}/{btype}/",
+        ]
         try:
-            dt = datetime.fromisoformat(btime_str.replace("Z", "+00:00"))
-            bt = int(dt.timestamp())
-        except ValueError:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        except Exception as e:
+            errors.append(f"{btype}: {e}")
             continue
-        result.append({
-            "backup_type":     btype,
-            "backup_id":       bid,
-            "backup_time":     bt,
-            "backup_time_iso": btime_str,
-            "size":            0,
-            "protected":       False,
-        })
+        if r.returncode not in (0, 23):  # 23 = partial (Verzeichnis nicht vorhanden)
+            errors.append(f"{btype}: rsync rc={r.returncode}: {r.stderr.strip()[:100]}")
+            continue
+        for line in r.stdout.splitlines():
+            # rsync --list-only Format: "drwxr-xr-x  N YYYY/MM/DD HH:MM:SS relpath"
+            # Snapshot-Zeilen: relpath = "<vmid>/2026-09-21T00:30:04Z"
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            path = parts[4]
+            path_parts = path.split("/")
+            if len(path_parts) != 2:
+                continue
+            bid, btime_str = path_parts
+            # Nur ISO-Timestamp-Verzeichnisse (nicht "owner" o.ä.)
+            if len(btime_str) < 16 or btime_str[4] != '-' or 'T' not in btime_str:
+                continue
+            try:
+                dt = datetime.fromisoformat(btime_str.replace("Z", "+00:00"))
+                bt = int(dt.timestamp())
+            except ValueError:
+                continue
+            result.append({
+                "backup_type":     btype,
+                "backup_id":       bid,
+                "backup_time":     bt,
+                "backup_time_iso": btime_str,
+                "size":            0,
+                "protected":       False,
+            })
+    if not result and errors:
+        return None, "; ".join(errors)
     result.sort(key=lambda x: (x["backup_type"], x["backup_id"], x["backup_time"]), reverse=True)
     _PBS_SNAP_CACHE = {"data": result, "ts": now}
     return result, None
