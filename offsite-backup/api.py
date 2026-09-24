@@ -1125,6 +1125,233 @@ def get_pve_task_status(pve_node, upid):
     return data.get("data", {}), None
 
 
+
+# ── PBS LXC Container Recovery ─────────────────────────────────────────────
+
+PBS_LXC_STATUS_FILE = "/data/pbs_lxc_restore_status.json"
+PBS_LXC_LOG_FILE    = "/data/logs/pbs_lxc_restore.log"
+_PBS_LXC_THREAD = None
+
+def _pbs_lxc_log(msg):
+    os.makedirs("/data/logs", exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{ts} | {msg}\n"
+    log.info("PBS-LXC-Recovery: %s", msg)
+    try:
+        with open(PBS_LXC_LOG_FILE, "a") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+def _pbs_lxc_status_write(status, step="", msg="", error=""):
+    data = {"status": status, "step": step, "msg": msg, "error": error, "ts": time.time()}
+    try:
+        with open(PBS_LXC_STATUS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def get_pbs_lxc_restore_status():
+    try:
+        with open(PBS_LXC_STATUS_FILE) as f:
+            st = json.load(f)
+        # Log-Tail anhängen
+        try:
+            with open(PBS_LXC_LOG_FILE) as f:
+                lines = f.readlines()
+            st["log_tail"] = "".join(lines[-30:])
+        except Exception:
+            st["log_tail"] = ""
+        return st
+    except Exception:
+        return {"status": "idle", "step": "", "msg": "", "error": "", "log_tail": ""}
+
+def list_vzdump_snapshots():
+    """Listet vzdump-lxc-*-Dateien auf Hetzner via rsync --list-only (OFFSITE_KEY)."""
+    opts = read_options()
+    host = opts.get("offsite_host", "")
+    user = opts.get("offsite_user", "")
+    port = int(opts.get("offsite_port", 23))
+    base = opts.get("offsite_path", "/home")
+    dump_path = opts.get("pbs_lxc_hetzner_dump_path", "ZPool/VMGuest/VMBackup/dump")
+    if not host or not user or not os.path.exists(OFFSITE_KEY):
+        return None, "Offsite-Verbindung nicht konfiguriert"
+    ssh_opt = (f"ssh -p {port} -i {OFFSITE_KEY} "
+               f"-o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15")
+    cmd = ["rsync", "-e", ssh_opt, "--list-only",
+           f"{user}@{host}:{base}/{dump_path}/"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return None, str(e)
+    if r.returncode not in (0, 23):
+        return None, f"rsync rc={r.returncode}: {r.stderr.strip()[:200]}"
+    result = []
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        fname = parts[4]
+        if not (fname.startswith("vzdump-lxc-") and fname.endswith(".tar.zst")):
+            continue
+        try:
+            size_bytes = int(parts[1].replace(",", ""))
+        except ValueError:
+            size_bytes = 0
+        result.append({
+            "filename": fname,
+            "size_bytes": size_bytes,
+            "size_gb": round(size_bytes / 1024**3, 2),
+            "date_str": parts[2],  # YYYY/MM/DD
+        })
+    result.sort(key=lambda x: x["date_str"], reverse=True)
+    return result, None
+
+def _nas_ssh_long(remote_cmd, timeout=7200):
+    """Wie _nas_ssh aber mit langem Timeout für rsync-Operationen."""
+    opts = read_options()
+    host = opts.get("zfs_storage_host", "")
+    user = opts.get("zfs_storage_user", "root") or "root"
+    if not host or not os.path.exists(NAS_KEY):
+        return None
+    cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes",
+           "-o", "ConnectTimeout=30", "-i", NAS_KEY, f"{user}@{host}"]
+    try:
+        return subprocess.run(cmd, input=remote_cmd, capture_output=True,
+                              text=True, timeout=timeout)
+    except Exception as e:
+        _pbs_lxc_log(f"_nas_ssh_long Exception: {e}")
+        return None
+
+def _do_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
+                         data_zfs_dataset, offsite_pbs_path):
+    """Background-Thread: PBS-Container vollständig wiederherstellen."""
+    def step(n, msg):
+        _pbs_lxc_log(f"[Schritt {n}/5] {msg}")
+        _pbs_lxc_status_write("running", f"Schritt {n}/5", msg)
+    try:
+        opts = read_options()
+        offsite_host = opts.get("offsite_host", "")
+        offsite_user = opts.get("offsite_user", "")
+        offsite_port = int(opts.get("offsite_port", 23))
+        offsite_base = opts.get("offsite_path", "/home")
+        nas_hetzner_key = opts.get("nas_hetzner_key", "/root/offsite-restore/id_ed25519_restore")
+        vmid = int(target_vmid)
+        tmp_dir = "/tmp/pbs-lxc-restore"
+        vzdump_remote_path = f"{offsite_base}/{opts.get('pbs_lxc_hetzner_dump_path', 'ZPool/VMGuest/VMBackup/dump')}/{vzdump_file}"
+        vzdump_local = f"{tmp_dir}/{vzdump_file}"
+        data_mount = f"/{data_zfs_dataset}"
+        pbs_src = f"{offsite_base}/{offsite_pbs_path}/"
+        pbs_dst = f"{data_mount}/"
+
+        # Schritt 1: vzdump von Hetzner → NAS
+        step(1, f"Lade {vzdump_file} von Hetzner → NAS ...")
+        r = _nas_ssh_long(f"""
+set -e
+mkdir -p {tmp_dir}
+rsync -a --info=progress2 \
+  -e "ssh -p {offsite_port} -i {nas_hetzner_key} -o BatchMode=yes -o StrictHostKeyChecking=no" \
+  "{offsite_user}@{offsite_host}:{vzdump_remote_path}" \
+  "{tmp_dir}/"
+echo "vzdump_ok"
+""", timeout=3600)
+        out = (r.stdout or "") if r else ""
+        if not r or r.returncode != 0 or "vzdump_ok" not in out:
+            err = (r.stderr.strip()[-400:] if r else "NAS SSH nicht verfügbar")
+            raise RuntimeError(f"Schritt 1 fehlgeschlagen: {err}")
+
+        # Schritt 2: ZFS-Dataset anlegen
+        step(2, f"Erstelle ZFS-Dataset {data_zfs_dataset} ...")
+        r = _nas_ssh_long(f"""
+set -e
+if ! zfs list {data_zfs_dataset} >/dev/null 2>&1; then
+  zfs create -p {data_zfs_dataset}
+  echo "dataset_created"
+else
+  echo "dataset_exists"
+fi
+""", timeout=30)
+        if not r or r.returncode != 0:
+            err = (r.stderr.strip()[-200:] if r else "NAS SSH Fehler")
+            raise RuntimeError(f"Schritt 2 fehlgeschlagen: {err}")
+        _pbs_lxc_log(f"ZFS: {(r.stdout or '').strip()}")
+
+        # Schritt 3: pct restore (direkt auf NAS via SSH)
+        step(3, f"Stelle LXC {vmid} auf {pve_node} wieder her (pct restore) ...")
+        r = _nas_ssh_long(f"""
+set -e
+pct restore {vmid} {vzdump_local} \
+  --storage {os_storage} \
+  --mp0 {data_mount},mp=/PBS \
+  --force 1 2>&1
+echo "pct_restore_done:$?"
+""", timeout=1800)
+        out = (r.stdout or "") if r else ""
+        if not r or ("pct_restore_done:0" not in out):
+            err = out[-400:] if out else ((r.stderr.strip()[-400:] if r else "NAS SSH Fehler"))
+            raise RuntimeError(f"Schritt 3 pct restore Fehler: {err}")
+        _pbs_lxc_log(f"pct restore Output: {out[-200:]}")
+
+        # Schritt 4: PBS-Daten von Hetzner → Dataset syncen
+        step(4, f"Sync PBS-Daten von Hetzner → {data_zfs_dataset} ...")
+        r = _nas_ssh_long(f"""
+set -e
+mkdir -p {pbs_dst}
+rsync -a --info=progress2 \
+  -e "ssh -p {offsite_port} -i {nas_hetzner_key} -o BatchMode=yes -o StrictHostKeyChecking=no" \
+  "{offsite_user}@{offsite_host}:{pbs_src}" \
+  "{pbs_dst}"
+echo "pbs_sync_ok"
+""", timeout=21600)
+        out = (r.stdout or "") if r else ""
+        if not r or (r.returncode not in (0, 24)) or "pbs_sync_ok" not in out:
+            err = (r.stderr.strip()[-400:] if r else "NAS SSH Fehler")
+            raise RuntimeError(f"Schritt 4 rsync PBS-Daten Fehler: {err}")
+
+        # Schritt 5: Container starten
+        step(5, f"Starte LXC {vmid} ...")
+        r = _nas_ssh_long(f"""
+pct start {vmid} 2>&1
+echo "start_done:$?"
+""", timeout=60)
+        out = (r.stdout or "") if r else ""
+        if not r or "start_done:0" not in out:
+            _pbs_lxc_log(f"WARN: pct start Fehler (manuell starten): {out[-200:]}")
+        else:
+            _pbs_lxc_log("Container gestartet.")
+
+        # Cleanup
+        _nas_ssh_long(f"rm -rf {tmp_dir}", timeout=60)
+        _pbs_lxc_log("PBS-Container-Recovery abgeschlossen.")
+        _pbs_lxc_status_write("done", "Fertig", "PBS-Container erfolgreich wiederhergestellt")
+
+    except Exception as e:
+        _pbs_lxc_log(f"FEHLER: {e}")
+        _pbs_lxc_status_write("error", "", "", str(e))
+
+def start_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
+                           data_zfs_dataset, offsite_pbs_path):
+    global _PBS_LXC_THREAD
+    if _PBS_LXC_THREAD and _PBS_LXC_THREAD.is_alive():
+        return False, "Restore läuft bereits"
+    if not vzdump_file or not target_vmid or not os_storage or not data_zfs_dataset:
+        return False, "Pflichtfelder fehlen"
+    # Log rotieren
+    try:
+        if os.path.exists(PBS_LXC_LOG_FILE):
+            os.rename(PBS_LXC_LOG_FILE, PBS_LXC_LOG_FILE + ".bak")
+    except Exception:
+        pass
+    _pbs_lxc_status_write("running", "Initialisierung", "Recovery wird gestartet...")
+    _pbs_lxc_log(f"Starte Recovery: {vzdump_file}, Node={pve_node}, VMID={target_vmid}, Storage={os_storage}, Dataset={data_zfs_dataset}")
+    _PBS_LXC_THREAD = threading.Thread(
+        target=_do_pbs_lxc_restore,
+        args=(vzdump_file, pve_node, target_vmid, os_storage, data_zfs_dataset, offsite_pbs_path),
+        daemon=True,
+    )
+    _PBS_LXC_THREAD.start()
+    return True, "Recovery gestartet"
+
 class MQTTClient:
     DEVICE = {
         "identifiers": ["offsite_backup"],
@@ -1445,6 +1672,61 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
+
+  <!-- Karte 5: PBS Container Recovery (LXC 901) -->
+  <div class="card" id="pbs-lxc-card">
+    <div class="card-header">
+      <h2>PBS Server wiederherstellen (LXC 901)</h2>
+      <button class="btn-icon" onclick="loadPbsLxcDumps(true)" title="Aktualisieren">&#8635;</button>
+    </div>
+    <p style="font-size:.85rem;color:#666;margin-bottom:.75rem">
+      PBS-Container (LXC 901) inkl. Datastore von Hetzner wiederherstellen &mdash;
+      Schritte: vzdump laden &rarr; ZFS-Dataset &rarr; pct restore &rarr; PBS-Daten sync &rarr; start.
+    </p>
+
+    <!-- Schritt 1: vzdump auswählen -->
+    <div id="pbs-lxc-dumps-container">
+      <span style="color:#999;font-size:.88rem">Lade&#8230;</span>
+    </div>
+
+    <!-- Schritt 2: Konfiguration + Starten -->
+    <div id="pbs-lxc-form" style="display:none;margin-top:.75rem;padding:.75rem;background:#f9f9f9;border-radius:6px">
+      <div style="font-size:.85rem;font-weight:600;margin-bottom:.5rem" id="pbs-lxc-selected-label"></div>
+      <div style="display:grid;gap:.4rem">
+        <div class="row"><span class="label">PVE Node</span>
+          <input id="pbs-lxc-node" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="nas">
+        </div>
+        <div class="row"><span class="label">Ziel-VMID</span>
+          <input id="pbs-lxc-vmid" type="number" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="901">
+        </div>
+        <div class="row"><span class="label">OS Storage</span>
+          <input id="pbs-lxc-os-storage" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="local-lvm">
+        </div>
+        <div class="row"><span class="label">Daten ZFS Dataset</span>
+          <input id="pbs-lxc-zfs-dataset" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="ZPool/PBS-recovered">
+        </div>
+        <div class="row"><span class="label">Hetzner PBS Pfad</span>
+          <input id="pbs-lxc-hetzner-pbs" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="ZPool/PBS">
+        </div>
+      </div>
+      <div class="actions" style="margin-top:.6rem">
+        <button class="btn-success" onclick="startPbsLxcRestore()">&#9654; Recovery starten</button>
+        <button class="btn-secondary" onclick="closePbsLxcForm()">&#10005; Abbrechen</button>
+      </div>
+    </div>
+
+    <!-- Status / Fortschritt -->
+    <div id="pbs-lxc-status" style="display:none;margin-top:.75rem;padding:.75rem;background:#f0f8ff;border-radius:6px;font-size:.85rem">
+      <div style="font-weight:600" id="pbs-lxc-status-title"></div>
+      <div style="color:#555;margin:.3rem 0" id="pbs-lxc-status-msg"></div>
+      <pre id="pbs-lxc-log" style="max-height:200px;overflow-y:auto;background:#fff;padding:.5rem;border-radius:4px;font-size:.78rem;margin-top:.4rem"></pre>
+      <div class="actions" style="margin-top:.5rem">
+        <button class="btn-secondary btn-sm" onclick="loadPbsLxcStatus(true)">&#8635; Status aktualisieren</button>
+        <button class="btn-primary btn-sm" onclick="resetPbsLxcStatus()" id="pbs-lxc-reset-btn" style="display:none">&#10006; Zur&#252;cksetzen</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Karte 4: Log -->
   <div class="card">
     <div class="card-header">
@@ -1709,6 +1991,156 @@ async function startPbsRestore() {
   }
 }
 
+// ── PBS LXC Container Recovery ─────────────────────────────────────────────
+let _pbsLxcSelected = null;
+let _pbsLxcPollTimer = null;
+
+async function loadPbsLxcDumps(force) {
+  const container = document.getElementById('pbs-lxc-dumps-container');
+  container.innerHTML = '<span style="color:#999;font-size:.88rem">Lade&#8230;</span>';
+  try {
+    const url = base + '/api/recovery/pbs_lxc/dumps' + (force ? '?force=1' : '');
+    const resp = await fetch(url);
+    const d = await resp.json();
+    if (d.error) { container.innerHTML = `<span style="color:red">${d.error}</span>`; return; }
+    const dumps = d.dumps || [];
+    if (!dumps.length) { container.innerHTML = '<span style="color:#999;font-size:.88rem">Keine vzdump-Dateien gefunden.</span>'; return; }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:.83rem">';
+    html += '<tr style="background:#f5f5f5"><th style="text-align:left;padding:.3rem .4rem">Datei</th><th style="text-align:right;padding:.3rem .4rem">Gr&#246;&#223;e</th><th style="text-align:right;padding:.3rem .4rem">Datum</th><th></th></tr>';
+    for (const d of dumps) {
+      html += `<tr style="border-top:1px solid #eee">
+        <td style="padding:.3rem .4rem;font-family:monospace">${d.filename}</td>
+        <td style="text-align:right;padding:.3rem .4rem">${d.size_gb} GB</td>
+        <td style="text-align:right;padding:.3rem .4rem">${d.date_str}</td>
+        <td style="padding:.3rem .4rem"><button class="btn-secondary" style="padding:.2rem .5rem;font-size:.8rem" onclick='selectPbsLxcDump(${JSON.stringify(d)})'>Ausw&#228;hlen</button></td>
+      </tr>`;
+    }
+    html += '</table>';
+    container.innerHTML = html;
+    // Auch Restore-Status laden
+    loadPbsLxcStatus(false);
+  } catch(e) {
+    container.innerHTML = `<span style="color:red">Fehler: ${e.message}</span>`;
+  }
+}
+
+function selectPbsLxcDump(dump) {
+  _pbsLxcSelected = dump;
+  const form = document.getElementById('pbs-lxc-form');
+  const label = document.getElementById('pbs-lxc-selected-label');
+  label.textContent = `Ausgewählt: ${dump.filename} (${dump.size_gb} GB, ${dump.date_str})`;
+  // Vorbelegen mit Config-Werten / letzten Werten
+  const nodeEl = document.getElementById('pbs-lxc-node');
+  const vmidEl = document.getElementById('pbs-lxc-vmid');
+  const storEl = document.getElementById('pbs-lxc-os-storage');
+  const zfsEl  = document.getElementById('pbs-lxc-zfs-dataset');
+  const pbsEl  = document.getElementById('pbs-lxc-hetzner-pbs');
+  if (!nodeEl.value) nodeEl.value = _pbsLxcLastValues.node || 'nas';
+  if (!vmidEl.value) vmidEl.value = _pbsLxcLastValues.vmid || '901';
+  if (!storEl.value) storEl.value = _pbsLxcLastValues.storage || 'local-lvm';
+  if (!zfsEl.value)  zfsEl.value  = _pbsLxcLastValues.dataset || 'ZPool/PBS-recovered';
+  if (!pbsEl.value)  pbsEl.value  = _pbsLxcLastValues.pbsPath || 'ZPool/PBS';
+  form.style.display = '';
+}
+
+function closePbsLxcForm() {
+  _pbsLxcSelected = null;
+  document.getElementById('pbs-lxc-form').style.display = 'none';
+}
+
+let _pbsLxcLastValues = {};
+
+async function startPbsLxcRestore() {
+  if (!_pbsLxcSelected) return;
+  const node    = document.getElementById('pbs-lxc-node').value.trim();
+  const vmid    = document.getElementById('pbs-lxc-vmid').value.trim();
+  const storage = document.getElementById('pbs-lxc-os-storage').value.trim();
+  const dataset = document.getElementById('pbs-lxc-zfs-dataset').value.trim();
+  const pbsPath = document.getElementById('pbs-lxc-hetzner-pbs').value.trim();
+  if (!node || !vmid || !storage || !dataset) { showMsg('Bitte alle Felder ausfüllen'); return; }
+  // Letzte Werte merken
+  _pbsLxcLastValues = { node, vmid, storage, dataset, pbsPath };
+  try {
+    localStorage.setItem('pbsLxcLastValues', JSON.stringify(_pbsLxcLastValues));
+  } catch(e) {}
+  closePbsLxcForm();
+  showMsg('Recovery wird gestartet…');
+  try {
+    const resp = await fetch(base + '/api/recovery/pbs_lxc/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        vzdump_file: _pbsLxcSelected.filename,
+        pve_node: node, target_vmid: parseInt(vmid),
+        os_storage: storage, data_zfs_dataset: dataset,
+        offsite_pbs_path: pbsPath,
+      }),
+    });
+    const d = await resp.json();
+    if (!d.ok) { showMsg('Fehler: ' + d.message, 5000); return; }
+    showMsg('Recovery gestartet!');
+    loadPbsLxcStatus(true);
+    _startPbsLxcPoll();
+  } catch(e) {
+    showMsg('Fehler: ' + e.message, 5000);
+  }
+}
+
+async function loadPbsLxcStatus(force) {
+  try {
+    const resp = await fetch(base + '/api/recovery/pbs_lxc/status');
+    const d = await resp.json();
+    const statusEl = document.getElementById('pbs-lxc-status');
+    const titleEl  = document.getElementById('pbs-lxc-status-title');
+    const msgEl    = document.getElementById('pbs-lxc-status-msg');
+    const logEl    = document.getElementById('pbs-lxc-log');
+    const resetBtn = document.getElementById('pbs-lxc-reset-btn');
+    if (d.status === 'idle') { statusEl.style.display = 'none'; return; }
+    statusEl.style.display = '';
+    const icons = {running: '⏳', done: '✅', error: '❌'};
+    titleEl.textContent = (icons[d.status] || '') + ' ' + (d.step || d.status);
+    if (d.error) {
+      msgEl.innerHTML = `<span style="color:red">${d.error}</span>`;
+    } else {
+      msgEl.textContent = d.msg || '';
+    }
+    if (d.log_tail) {
+      logEl.textContent = d.log_tail;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    resetBtn.style.display = (d.status !== 'running') ? '' : 'none';
+    if (d.status === 'running') {
+      _startPbsLxcPoll();
+    } else {
+      _stopPbsLxcPoll();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+function resetPbsLxcStatus() {
+  fetch(base + '/api/recovery/pbs_lxc/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({_reset: true}),
+  }).catch(() => {});
+  document.getElementById('pbs-lxc-status').style.display = 'none';
+}
+
+function _startPbsLxcPoll() {
+  if (_pbsLxcPollTimer) return;
+  _pbsLxcPollTimer = setInterval(() => loadPbsLxcStatus(false), 10000);
+}
+function _stopPbsLxcPoll() {
+  if (_pbsLxcPollTimer) { clearInterval(_pbsLxcPollTimer); _pbsLxcPollTimer = null; }
+}
+
+// Beim Laden: letzte Werte aus localStorage, dumps laden
+try {
+  const saved = localStorage.getItem('pbsLxcLastValues');
+  if (saved) _pbsLxcLastValues = JSON.parse(saved);
+} catch(e) {}
+loadPbsLxcDumps(false);
+
 loadPbsSnapshots(false);
 loadStatus(); loadLog(); loadOffsiteInfo();
 setInterval(loadStatus, 15000);
@@ -1725,6 +2157,8 @@ _API_ROUTES = (
     "/api/status", "/api/options", "/api/log", "/api/backups",
     "/api/backup/abort", "/api/backup", "/api/offsite_info",
     "/api/recovery/pbs/snapshots", "/api/recovery/pbs/restore", "/api/recovery/pbs/task",
+    "/api/recovery/pbs_lxc/dumps", "/api/recovery/pbs_lxc/status",
+    "/api/recovery/pbs_lxc/start",
 )
 
 
@@ -1783,6 +2217,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 500)
             else:
                 self._json({"snapshots": data})
+        elif path == "/api/recovery/pbs_lxc/dumps":
+            data, err = list_vzdump_snapshots()
+            if err:
+                self._json({"error": err}, 500)
+            else:
+                self._json({"dumps": data})
+        elif path == "/api/recovery/pbs_lxc/status":
+            self._json(get_pbs_lxc_restore_status())
         else:
             self._json({"error": "Not found"}, 404)
 
@@ -1830,6 +2272,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "message": err}, 500)
             else:
                 self._json({"ok": True, "status": status})
+        elif path == "/api/recovery/pbs_lxc/start":
+            vzdump_file      = body.get("vzdump_file", "")
+            pve_node         = body.get("pve_node", "nas")
+            target_vmid      = body.get("target_vmid", 901)
+            os_storage       = body.get("os_storage", "local-lvm")
+            data_zfs_dataset = body.get("data_zfs_dataset", "ZPool/PBS-recovered")
+            offsite_pbs_path = body.get("offsite_pbs_path", "ZPool/PBS")
+            if body.get("_reset"):
+                _pbs_lxc_status_write("idle")
+                self._json({"ok": True, "message": "Reset"})
+                return
+            ok, msg = start_pbs_lxc_restore(
+                vzdump_file, pve_node, target_vmid, os_storage,
+                data_zfs_dataset, offsite_pbs_path)
+            self._json({"ok": ok, "message": msg}, 200 if ok else 409)
         else:
             self._json({"error": "Not found"}, 404)
 
