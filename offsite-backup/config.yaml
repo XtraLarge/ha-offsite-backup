@@ -1,5 +1,5 @@
 name: Offsite Backup
-version: "1.11.1"
+version: "1.12.0"
 slug: offsite_backup
 description: Offsite Backup via rsync + ZFS Snapshot auf externen Storage-Host mit BackupPC-Recovery direkt auf Home Assistant.
 url: https://github.com/XtraLarge/ha-offsite-backup
@@ -42,6 +42,12 @@ options:
   pbs_lxc_hetzner_pbs_path: "ZPool/PBS"
   pbs_lxc_hetzner_dump_path: "ZPool/VMGuest/VMBackup/dump"
   nas_hetzner_key: "/root/offsite-restore/id_ed25519_restore"
+  backuppc_docker_host: "10.10.11.0"
+  backuppc_container_name: "backuppc"
+  backuppc_data_path: "/ZPool/BackupPC"
+  backuppc_config_path: "/ZPool/Docker/backuppc/config"
+  backuppc_home_path: "/ZPool/Docker/backuppc/home"
+  backuppc_sshconfig_path: "/ZPool/Docker/backuppc/ssh_config"
   pve_host: "10.10.4.10"
   pve_api_token: ""
   auto_resume_backup: true
@@ -130,6 +136,12 @@ schema:
   pbs_lxc_hetzner_pbs_path: str
   pbs_lxc_hetzner_dump_path: str
   nas_hetzner_key: str
+  backuppc_docker_host: str
+  backuppc_container_name: str
+  backuppc_data_path: str
+  backuppc_config_path: str
+  backuppc_home_path: str
+  backuppc_sshconfig_path: str
   pve_host: str
   pve_api_token: password
   auto_resume_backup: bool

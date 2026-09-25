@@ -1352,6 +1352,176 @@ def start_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
     _PBS_LXC_THREAD.start()
     return True, "Recovery gestartet"
 
+# ── BackupPC Docker Restore ─────────────────────────────────────────────────
+
+BPPC_STATUS_FILE = "/data/backuppc_restore_status.json"
+BPPC_LOG_FILE    = "/data/logs/backuppc_restore.log"
+_BPPC_THREAD = None
+
+def _bppc_log(msg):
+    os.makedirs("/data/logs", exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{ts} | {msg}\n"
+    log.info("BackupPC-Recovery: %s", msg)
+    try:
+        with open(BPPC_LOG_FILE, "a") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+def _bppc_status_write(status, step="", msg="", error=""):
+    data = {"status": status, "step": step, "msg": msg, "error": error, "ts": time.time()}
+    try:
+        with open(BPPC_STATUS_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def get_bppc_restore_status():
+    try:
+        with open(BPPC_STATUS_FILE) as f:
+            st = json.load(f)
+        try:
+            with open(BPPC_LOG_FILE) as f:
+                lines = f.readlines()
+            st["log_tail"] = "".join(lines[-30:])
+        except Exception:
+            st["log_tail"] = ""
+        return st
+    except Exception:
+        return {"status": "idle", "step": "", "msg": "", "error": "", "log_tail": ""}
+
+def _do_bppc_restore(docker_host, container_name, data_path, config_path,
+                     home_path, sshconfig_path, offsite_snapshot=""):
+    """Background-Thread: BackupPC-Docker vollständig von Hetzner wiederherstellen."""
+    def step(n, msg):
+        _bppc_log(f"[Schritt {n}/4] {msg}")
+        _bppc_status_write("running", f"Schritt {n}/4", msg)
+    try:
+        opts = read_options()
+        offsite_host  = opts.get("offsite_host", "")
+        offsite_user  = opts.get("offsite_user", "")
+        offsite_port  = int(opts.get("offsite_port", 23))
+        offsite_base  = opts.get("offsite_path", "/home")
+        nas_key       = opts.get("nas_hetzner_key", "/root/offsite-restore/id_ed25519_restore")
+
+        # Snapshot-Präfix für Pfade
+        if offsite_snapshot:
+            snap_prefix = f"{offsite_base}/.snapshots/{offsite_snapshot}"
+        else:
+            snap_prefix = offsite_base
+
+        ssh_e = (f"ssh -i {nas_key} -p {offsite_port} "
+                 f"-o BatchMode=yes -o StrictHostKeyChecking=no")
+
+        # Schritt 1: BackupPC Container stoppen (über NAS per pct exec)
+        step(1, f"Stoppe BackupPC-Container '{container_name}' ...")
+        r = _nas_ssh_long(f"""
+set -e
+pct exec 900 -- docker stop {container_name} 2>&1 || true
+echo "stop_done"
+""", timeout=60)
+        out = (r.stdout or "") if r else ""
+        if not r or "stop_done" not in out:
+            err = (r.stderr.strip()[-200:] if r else "NAS SSH nicht verfügbar")
+            raise RuntimeError(f"Schritt 1 fehlgeschlagen: {err}")
+        _bppc_log(f"Container gestoppt. Output: {out.strip()[-100:]}")
+
+        # Schritt 2: 4x rsync Hetzner → NAS
+        step(2, "Synchronisiere Daten von Hetzner → NAS (4 Pfade) ...")
+
+        rsync_pairs = [
+            (f"{snap_prefix}/ZPool/BackupPC/",              f"{data_path}/"),
+            (f"{snap_prefix}/ZPool/Docker/backuppc/config/", f"{config_path}/"),
+            (f"{snap_prefix}/ZPool/Docker/backuppc/home/",   f"{home_path}/"),
+            (f"{snap_prefix}/ZPool/Docker/backuppc/ssh_config/", f"{sshconfig_path}/"),
+        ]
+
+        for idx, (src, dst) in enumerate(rsync_pairs, 1):
+            _bppc_log(f"  rsync {idx}/4: {src} → {dst}")
+            r = _nas_ssh_long(f"""
+set -e
+mkdir -p "{dst}"
+rsync -avz --delete \\
+  -e "{ssh_e}" \\
+  "{offsite_user}@{offsite_host}:{src}" \\
+  "{dst}"
+echo "rsync_{idx}_ok"
+""", timeout=21600)
+            out = (r.stdout or "") if r else ""
+            if not r or (r.returncode not in (0, 24)) or f"rsync_{idx}_ok" not in out:
+                err = (r.stderr.strip()[-400:] if r else "NAS SSH Fehler")
+                raise RuntimeError(f"Schritt 2 rsync {idx}/4 fehlgeschlagen: {err}")
+            _bppc_log(f"  rsync {idx}/4 OK")
+
+        # Schritt 3: Container neu starten (über NAS per pct exec)
+        step(3, f"Starte BackupPC-Container '{container_name}' neu ...")
+        r = _nas_ssh_long(f"""
+set -e
+pct exec 900 -- docker start {container_name} 2>&1
+echo "start_done:$?"
+""", timeout=60)
+        out = (r.stdout or "") if r else ""
+        if not r or "start_done:0" not in out:
+            _bppc_log(f"WARN: docker start Fehler (ggf. manuell starten): {out[-200:]}")
+        else:
+            _bppc_log("Container gestartet.")
+
+        # Schritt 4: Smoke-Test HTTP GET http://<docker_host>:8080
+        step(4, f"Smoke-Test: HTTP GET http://{docker_host}:8080 ...")
+        import urllib.request as _ureq
+        smoke_ok = False
+        for attempt in range(1, 6):
+            _bppc_log(f"  Smoke-Test Versuch {attempt}/5 ...")
+            try:
+                req = _ureq.Request(f"http://{docker_host}:8080",
+                                    method="GET")
+                with _ureq.urlopen(req, timeout=30) as resp:
+                    if resp.status < 500:
+                        smoke_ok = True
+                        break
+            except Exception as se:
+                _bppc_log(f"  Versuch {attempt} fehlgeschlagen: {se}")
+                if attempt < 5:
+                    time.sleep(10)
+
+        if smoke_ok:
+            _bppc_log("Smoke-Test bestanden.")
+        else:
+            _bppc_log("WARN: Smoke-Test fehlgeschlagen — Container läuft möglicherweise noch nicht.")
+
+        _bppc_log("BackupPC-Recovery abgeschlossen.")
+        _bppc_status_write("done", "Fertig", "BackupPC erfolgreich wiederhergestellt")
+
+    except Exception as e:
+        _bppc_log(f"FEHLER: {e}")
+        _bppc_status_write("error", "", "", str(e))
+
+def start_bppc_restore(docker_host, container_name, data_path, config_path,
+                       home_path, sshconfig_path, offsite_snapshot=""):
+    global _BPPC_THREAD
+    if _BPPC_THREAD and _BPPC_THREAD.is_alive():
+        return False, "Restore läuft bereits"
+    if not container_name or not data_path:
+        return False, "Pflichtfelder fehlen (container_name, data_path)"
+    try:
+        if os.path.exists(BPPC_LOG_FILE):
+            os.rename(BPPC_LOG_FILE, BPPC_LOG_FILE + ".bak")
+    except Exception:
+        pass
+    _bppc_status_write("running", "Initialisierung", "Recovery wird gestartet...")
+    _bppc_log(f"Starte Recovery: docker_host={docker_host}, container={container_name}, "
+              f"data={data_path}, snapshot='{offsite_snapshot}'")
+    _BPPC_THREAD = threading.Thread(
+        target=_do_bppc_restore,
+        args=(docker_host, container_name, data_path, config_path,
+              home_path, sshconfig_path, offsite_snapshot),
+        daemon=True,
+    )
+    _BPPC_THREAD.start()
+    return True, "Recovery gestartet"
+
+
 class MQTTClient:
     DEVICE = {
         "identifiers": ["offsite_backup"],
@@ -1693,6 +1863,63 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
+  <!-- Karte 6: BackupPC wiederherstellen -->
+  <div class="card" id="backuppc-restore-card">
+    <div class="card-header">
+      <h2>BackupPC wiederherstellen</h2>
+      <button class="btn-icon" onclick="loadBppcStatus(true)" title="Aktualisieren">&#8635;</button>
+    </div>
+    <p style="font-size:.85rem;color:#666;margin-bottom:.75rem">
+      BackupPC-Docker inkl. Daten von Hetzner wiederherstellen &mdash;
+      Schritte: Container stoppen &rarr; Daten sync (4 Pfade) &rarr; Container starten &rarr; Smoke-Test.
+    </p>
+
+    <!-- Hetzner-Snapshot auswählen -->
+    <div style="display:flex;align-items:center;gap:.5rem;margin:.35rem 0;font-size:.9rem">
+      <span class="label">Quelle (Hetzner)</span>
+      <select id="bppc-snapshot" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1">
+        <option value="">Aktueller Stand (live)</option>
+      </select>
+    </div>
+
+    <!-- Konfigurationsfelder -->
+    <div id="bppc-form-fields" style="margin-top:.6rem;padding:.75rem;background:#f9f9f9;border-radius:6px;display:grid;gap:.4rem">
+      <div class="row"><span class="label">Docker-Host</span>
+        <input id="bppc-docker-host" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="10.10.11.0">
+      </div>
+      <div class="row"><span class="label">Container-Name</span>
+        <input id="bppc-container-name" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="backuppc">
+      </div>
+      <div class="row"><span class="label">Daten-Pfad</span>
+        <input id="bppc-data-path" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="/ZPool/BackupPC">
+      </div>
+      <div class="row"><span class="label">Config-Pfad</span>
+        <input id="bppc-config-path" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="/ZPool/Docker/backuppc/config">
+      </div>
+      <div class="row"><span class="label">Home-Pfad</span>
+        <input id="bppc-home-path" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="/ZPool/Docker/backuppc/home">
+      </div>
+      <div class="row"><span class="label">SSH-Config-Pfad</span>
+        <input id="bppc-sshconfig-path" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="/ZPool/Docker/backuppc/ssh_config">
+      </div>
+    </div>
+
+    <div class="actions" style="margin-top:.75rem">
+      <button class="btn-success" onclick="startBppcRestore()">&#9654; Recovery starten</button>
+    </div>
+
+    <!-- Status / Fortschritt -->
+    <div id="bppc-status" style="display:none;margin-top:.75rem;padding:.75rem;background:#f0f8ff;border-radius:6px;font-size:.85rem">
+      <div style="font-weight:600" id="bppc-status-title"></div>
+      <div style="color:#555;margin:.3rem 0" id="bppc-status-msg"></div>
+      <pre id="bppc-log" style="max-height:200px;overflow-y:auto;background:#fff;padding:.5rem;border-radius:4px;font-size:.78rem;margin-top:.4rem"></pre>
+      <div class="actions" style="margin-top:.5rem">
+        <button class="btn-secondary btn-sm" onclick="loadBppcStatus(true)">&#8635; Status aktualisieren</button>
+        <button class="btn-primary btn-sm" onclick="resetBppcStatus()" id="bppc-reset-btn" style="display:none">&#10006; Zur&#252;cksetzen</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Karte 4: Log -->
   <div class="card">
     <div class="card-header">
@@ -2013,6 +2240,120 @@ try {
 } catch(e) {}
 loadPbsLxcDumps(false);
 
+// ── BackupPC Docker Restore ─────────────────────────────────────────────────
+let _bppcPollTimer = null;
+
+async function loadBppcOptions() {
+  try {
+    const opts = await fetch(base + '/api/options').then(r => r.json());
+    const f = (id, key, def) => {
+      const el = document.getElementById(id);
+      if (el && !el.value) el.value = opts[key] || def;
+    };
+    f('bppc-docker-host',    'backuppc_docker_host',    '10.10.11.0');
+    f('bppc-container-name', 'backuppc_container_name', 'backuppc');
+    f('bppc-data-path',      'backuppc_data_path',      '/ZPool/BackupPC');
+    f('bppc-config-path',    'backuppc_config_path',    '/ZPool/Docker/backuppc/config');
+    f('bppc-home-path',      'backuppc_home_path',      '/ZPool/Docker/backuppc/home');
+    f('bppc-sshconfig-path', 'backuppc_sshconfig_path', '/ZPool/Docker/backuppc/ssh_config');
+  } catch(e) { console.error('loadBppcOptions:', e); }
+  // Snapshots in Select befüllen
+  try {
+    const d = await fetch(base + '/api/offsite_info').then(r => r.json());
+    const sel = document.getElementById('bppc-snapshot');
+    if (sel && d.snapshots && d.snapshots.length) {
+      d.snapshots.forEach(function(s) {
+        const opt = document.createElement('option');
+        opt.value = s.name || s.description || '';
+        const created = s.created
+          ? new Date(s.created).toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'})
+          : '';
+        opt.textContent = (s.description || s.name || opt.value) + (created ? '  (' + created + ')' : '');
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) { console.error('loadBppcOptions/snapshots:', e); }
+}
+
+async function startBppcRestore() {
+  const docker_host    = document.getElementById('bppc-docker-host').value.trim();
+  const container_name = document.getElementById('bppc-container-name').value.trim();
+  const data_path      = document.getElementById('bppc-data-path').value.trim();
+  const config_path    = document.getElementById('bppc-config-path').value.trim();
+  const home_path      = document.getElementById('bppc-home-path').value.trim();
+  const sshconfig_path = document.getElementById('bppc-sshconfig-path').value.trim();
+  const offsite_snapshot = document.getElementById('bppc-snapshot').value;
+  if (!container_name || !data_path) { showMsg('Bitte Container-Name und Daten-Pfad angeben'); return; }
+  if (!confirm('BackupPC-Recovery jetzt starten?\n\nContainer wird gestoppt, Daten von Hetzner synchronisiert.')) return;
+  showMsg('Recovery wird gestartet…');
+  try {
+    const resp = await fetch(base + '/api/backuppc_restore/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ docker_host, container_name, data_path, config_path,
+                             home_path, sshconfig_path, offsite_snapshot }),
+    });
+    const d = await resp.json();
+    if (!d.ok) { showMsg('Fehler: ' + d.message, 5000); return; }
+    showMsg('Recovery gestartet!');
+    loadBppcStatus(true);
+    _startBppcPoll();
+  } catch(e) {
+    showMsg('Fehler: ' + e.message, 5000);
+  }
+}
+
+async function loadBppcStatus(force) {
+  try {
+    const resp = await fetch(base + '/api/backuppc_restore/status');
+    const d = await resp.json();
+    const statusEl = document.getElementById('bppc-status');
+    const titleEl  = document.getElementById('bppc-status-title');
+    const msgEl    = document.getElementById('bppc-status-msg');
+    const logEl    = document.getElementById('bppc-log');
+    const resetBtn = document.getElementById('bppc-reset-btn');
+    if (d.status === 'idle') { if (statusEl) statusEl.style.display = 'none'; return; }
+    statusEl.style.display = '';
+    const icons = {running: '⏳', done: '✅', error: '❌'};
+    titleEl.textContent = (icons[d.status] || '') + ' ' + (d.step || d.status);
+    if (d.error) {
+      msgEl.innerHTML = '<span style="color:red">' + d.error + '</span>';
+    } else {
+      msgEl.textContent = d.msg || '';
+    }
+    if (d.log_tail) {
+      logEl.textContent = d.log_tail;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    resetBtn.style.display = (d.status !== 'running') ? '' : 'none';
+    if (d.status === 'running') {
+      _startBppcPoll();
+    } else {
+      _stopBppcPoll();
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function resetBppcStatus() {
+  try {
+    await fetch(base + '/api/backuppc_restore/reset', { method: 'POST' });
+  } catch(e) {}
+  const statusEl = document.getElementById('bppc-status');
+  if (statusEl) statusEl.style.display = 'none';
+  _stopBppcPoll();
+}
+
+function _startBppcPoll() {
+  if (_bppcPollTimer) return;
+  _bppcPollTimer = setInterval(() => loadBppcStatus(false), 10000);
+}
+function _stopBppcPoll() {
+  if (_bppcPollTimer) { clearInterval(_bppcPollTimer); _bppcPollTimer = null; }
+}
+
+
+loadBppcOptions();
+loadBppcStatus(false);
 loadStatus(); loadLog(); loadOffsiteInfo();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
@@ -2030,6 +2371,8 @@ _API_ROUTES = (
     "/api/recovery/pbs/snapshots", "/api/recovery/pbs/restore", "/api/recovery/pbs/task",
     "/api/recovery/pbs_lxc/dumps", "/api/recovery/pbs_lxc/status",
     "/api/recovery/pbs_lxc/start",
+    "/api/backuppc_restore/status", "/api/backuppc_restore/log",
+    "/api/backuppc_restore/start", "/api/backuppc_restore/reset",
 )
 
 
@@ -2096,6 +2439,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"dumps": data})
         elif path == "/api/recovery/pbs_lxc/status":
             self._json(get_pbs_lxc_restore_status())
+        elif path == "/api/backuppc_restore/status":
+            self._json(get_bppc_restore_status())
+        elif path == "/api/backuppc_restore/log":
+            try:
+                with open(BPPC_LOG_FILE) as f:
+                    lines = f.readlines()
+                self._json({"lines": lines[-100:]})
+            except Exception:
+                self._json({"lines": []})
         else:
             self._json({"error": "Not found"}, 404)
 
@@ -2158,6 +2510,22 @@ class Handler(BaseHTTPRequestHandler):
                 vzdump_file, pve_node, target_vmid, os_storage,
                 data_zfs_dataset, offsite_pbs_path)
             self._json({"ok": ok, "message": msg}, 200 if ok else 409)
+        elif path == "/api/backuppc_restore/start":
+            opts = read_options()
+            docker_host    = body.get("docker_host",    opts.get("backuppc_docker_host", "10.10.11.0"))
+            container_name = body.get("container_name", opts.get("backuppc_container_name", "backuppc"))
+            data_path      = body.get("data_path",      opts.get("backuppc_data_path", "/ZPool/BackupPC"))
+            config_path    = body.get("config_path",    opts.get("backuppc_config_path", "/ZPool/Docker/backuppc/config"))
+            home_path      = body.get("home_path",      opts.get("backuppc_home_path", "/ZPool/Docker/backuppc/home"))
+            sshconfig_path = body.get("sshconfig_path", opts.get("backuppc_sshconfig_path", "/ZPool/Docker/backuppc/ssh_config"))
+            offsite_snapshot = body.get("offsite_snapshot", "")
+            ok, msg = start_bppc_restore(
+                docker_host, container_name, data_path, config_path,
+                home_path, sshconfig_path, offsite_snapshot)
+            self._json({"ok": ok, "message": msg}, 200 if ok else 409)
+        elif path == "/api/backuppc_restore/reset":
+            _bppc_status_write("idle")
+            self._json({"ok": True, "message": "Reset"})
         else:
             self._json({"error": "Not found"}, 404)
 
