@@ -2321,7 +2321,7 @@ async function startBppcRestore() {
   const sshconfig_path = document.getElementById('bppc-sshconfig-path').value.trim();
   const offsite_snapshot = document.getElementById('bppc-snapshot').value;
   if (!container_name || !data_path) { showMsg('Bitte Container-Name und Daten-Pfad angeben'); return; }
-  if (!confirm('BackupPC-Recovery jetzt starten?\n\nContainer wird gestoppt, Daten von Hetzner synchronisiert.')) return;
+  if (!confirm('BackupPC-Recovery jetzt starten?\\n\\nContainer wird gestoppt, Daten von Hetzner synchronisiert.')) return;
   showMsg('Recovery wird gestartet…');
   try {
     const resp = await fetch(base + '/api/backuppc_restore/start', {
