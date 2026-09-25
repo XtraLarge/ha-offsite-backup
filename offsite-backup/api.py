@@ -1639,40 +1639,6 @@ DASHBOARD_HTML = """\
     </div>
   </div>
 
-  <!-- Karte 4: PBS Recovery -->
-  <div class="card" id="pbs-recovery-card">
-    <div class="card-header">
-      <h2>PBS Recovery</h2>
-      <button class="btn-icon" onclick="loadPbsSnapshots(true)" title="Aktualisieren">&#8635;</button>
-    </div>
-    <p style="font-size:.85rem;color:#666;margin-bottom:.75rem">
-      Snapshots aus PBS-Datastore &mdash; direkte Wiederherstellung auf PVE via API.
-    </p>
-    <div id="pbs-snap-container">
-      <span style="color:#999;font-size:.88rem">Lade&#8230;</span>
-    </div>
-    <div id="pbs-restore-form" style="display:none;margin-top:.75rem;padding:.75rem;background:#f9f9f9;border-radius:6px">
-      <div style="font-size:.85rem;font-weight:600;margin-bottom:.5rem" id="pbs-restore-label"></div>
-      <div style="display:grid;gap:.4rem">
-        <div class="row"><span class="label">PVE Node</span>
-          <input id="pbs-pve-node" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="gvmhp">
-        </div>
-        <div class="row"><span class="label">Target Storage</span>
-          <input id="pbs-target-stor" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="local-lvm">
-        </div>
-        <div class="row"><span class="label">Ziel-VMID</span>
-          <input id="pbs-target-vmid" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="leer = Original-ID">
-        </div>
-      </div>
-      <div class="actions" style="margin-top:.6rem">
-        <button class="btn-success" onclick="startPbsRestore()">&#9654; Restore starten</button>
-        <button class="btn-secondary" onclick="closePbsRestoreForm()">&#10005; Abbrechen</button>
-      </div>
-      <div id="pbs-restore-result" style="margin-top:.5rem;font-size:.85rem"></div>
-    </div>
-  </div>
-
-
   <!-- Karte 5: PBS Container Recovery (LXC 901) -->
   <div class="card" id="pbs-lxc-card">
     <div class="card-header">
@@ -1897,100 +1863,6 @@ function openRecoveryUI() {
   if (url) window.open(url, '_blank');
 }
 
-let _pbsRestoreSelection = null;
-
-async function loadPbsSnapshots(force) {
-  const container = document.getElementById('pbs-snap-container');
-  if (!container) return;
-  try {
-    const url = base + '/api/recovery/pbs/snapshots' + (force ? '?force=1' : '');
-    const d = await fetch(url).then(r => r.json());
-    if (d.error) { container.innerHTML = '<span style="color:var(--err)">' + d.error + '</span>'; return; }
-    const snaps = d.snapshots || [];
-    if (!snaps.length) { container.innerHTML = '<span style="color:#999">Keine Snapshots gefunden.</span>'; return; }
-    // Gruppieren nach backup_type/backup_id
-    const groups = {};
-    snaps.forEach(function(s) {
-      const key = s.backup_type + '/' + s.backup_id;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(s);
-    });
-    let html = '<table style="width:100%;font-size:.82rem;border-collapse:collapse">';
-    html += '<thead><tr style="color:#888;border-bottom:1px solid #eee">'
-          + '<th style="text-align:left;padding:.2rem .4rem">VM/CT</th>'
-          + '<th style="text-align:left;padding:.2rem .4rem">Typ</th>'
-          + '<th style="text-align:left;padding:.2rem .4rem">Datum</th>'
-          + '<th style="text-align:right;padding:.2rem .4rem">Größe</th>'
-          + '<th style="padding:.2rem .4rem"></th>'
-          + '</tr></thead><tbody>';
-    Object.keys(groups).sort().forEach(function(key) {
-      groups[key].forEach(function(s, i) {
-        const dt = s.backup_time_iso ? new Date(s.backup_time_iso).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-        const sz = s.size ? (s.size / 1024 / 1024 / 1024).toFixed(1) + ' GB' : '—';
-        const rowKey = JSON.stringify(s).replace(/"/g, '&quot;');
-        html += '<tr style="border-bottom:1px solid #f5f5f5">'
-              + '<td style="padding:.2rem .4rem;font-weight:' + (i===0?'600':'400') + '">' + (i===0 ? s.backup_id : '') + '</td>'
-              + '<td style="padding:.2rem .4rem;color:#888">' + s.backup_type + '</td>'
-              + '<td style="padding:.2rem .4rem">' + dt + '</td>'
-              + '<td style="padding:.2rem .4rem;text-align:right;color:#888">' + sz + '</td>'
-              + '<td style="padding:.2rem .4rem;text-align:right"><button class="btn-secondary" style="padding:.2rem .5rem;font-size:.78rem" onclick="openPbsRestoreForm(' + rowKey + ')">Restore</button></td>'
-              + '</tr>';
-      });
-    });
-    html += '</tbody></table>';
-    container.innerHTML = html;
-  } catch(e) { container.innerHTML = '<span style="color:var(--err)">Fehler: ' + e + '</span>'; }
-}
-
-function openPbsRestoreForm(snap) {
-  _pbsRestoreSelection = snap;
-  const form = document.getElementById('pbs-restore-form');
-  const label = document.getElementById('pbs-restore-label');
-  if (!form || !label) return;
-  const dt = snap.backup_time_iso ? new Date(snap.backup_time_iso).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
-  label.textContent = 'Restore: ' + snap.backup_type + '/' + snap.backup_id + ' vom ' + dt;
-  document.getElementById('pbs-restore-result').textContent = '';
-  document.getElementById('pbs-pve-node').value = document.getElementById('pbs-pve-node').value || 'gvmhp';
-  form.style.display = 'block';
-}
-
-function closePbsRestoreForm() {
-  const form = document.getElementById('pbs-restore-form');
-  if (form) form.style.display = 'none';
-  _pbsRestoreSelection = null;
-}
-
-async function startPbsRestore() {
-  if (!_pbsRestoreSelection) return;
-  const node = document.getElementById('pbs-pve-node').value.trim();
-  const stor = document.getElementById('pbs-target-stor').value.trim();
-  const tvmid = document.getElementById('pbs-target-vmid').value.trim() || null;
-  if (!node || !stor) { showMsg('PVE Node und Target Storage sind Pflichtfelder', 4000); return; }
-  const resultEl = document.getElementById('pbs-restore-result');
-  resultEl.innerHTML = '<span class="spinner"></span> Restore wird gestartet...';
-  try {
-    const d = await fetch(base + '/api/recovery/pbs/restore', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        backup_type: _pbsRestoreSelection.backup_type,
-        backup_id: _pbsRestoreSelection.backup_id,
-        backup_time: _pbsRestoreSelection.backup_time,
-        pve_node: node,
-        target_storage: stor,
-        target_vmid: tvmid,
-      }),
-    }).then(r => r.json());
-    if (d.ok) {
-      resultEl.innerHTML = '<span style="color:var(--ok)">&#10003; Restore gestartet. Task: <code>' + (d.upid || '—') + '</code></span>';
-    } else {
-      resultEl.innerHTML = '<span style="color:var(--err)">&#10005; ' + (d.message || 'Fehler') + '</span>';
-    }
-  } catch(e) {
-    resultEl.innerHTML = '<span style="color:var(--err)">&#10005; ' + e + '</span>';
-  }
-}
-
 // ── PBS LXC Container Recovery ─────────────────────────────────────────────
 let _pbsLxcSelected = null;
 let _pbsLxcPollTimer = null;
@@ -2141,7 +2013,6 @@ try {
 } catch(e) {}
 loadPbsLxcDumps(false);
 
-loadPbsSnapshots(false);
 loadStatus(); loadLog(); loadOffsiteInfo();
 setInterval(loadStatus, 15000);
 setInterval(() => loadLog(false), 30000);
