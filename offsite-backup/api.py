@@ -1936,7 +1936,7 @@ DASHBOARD_HTML = """\
 <script>
 const base = "__INGRESS_PATH__";
 
-// ── Debug-Banner (v1.12.1) ─────────────────────────────────────────────────
+// \u2500\u2500 Debug-Banner (v1.12.1) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 (function() {
   function _showBanner(msg, color) {
     var b = document.getElementById('_js_debug');
@@ -1966,11 +1966,11 @@ const base = "__INGRESS_PATH__";
       _showBanner('Fehlende DOM-IDs: ' + missing.join(', '), '#fff3cd');
     }
     if (document.getElementById('last-run') && document.getElementById('last-run').textContent === '\u2014') {
-      _showBanner('STATUS nicht geladen nach 2s — fetch-Basis: ' + base, '#ffcccc');
+      _showBanner('STATUS nicht geladen nach 2s \u2014 fetch-Basis: ' + base, '#ffcccc');
     }
   }, 2000);
 })();
-// ── Ende Debug-Banner ────────────────────────────────────────────────────────
+// \u2500\u2500 Ende Debug-Banner \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 function showMsg(text, dur=3000) {
   const el = document.getElementById('msg');
@@ -1981,7 +1981,7 @@ function showMsg(text, dur=3000) {
 }
 
 function fmtDate(iso) {
-  if (!iso) return '—';
+  if (!iso) return '\u2014';
   const d = new Date(iso);
   if (isNaN(d)) return iso;
   return d.toLocaleString('de-DE', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'});
@@ -2003,7 +2003,7 @@ async function loadStatus() {
     const badge = el('status-badge');
 
     if (s.backup_running) {
-      badge.textContent = 'läuft';
+      badge.textContent = 'l\u00e4uft';
       badge.className = 'badge badge-running';
       const row = el('backup-running-row');
       if (row) row.style.display = 'flex';
@@ -2014,7 +2014,7 @@ async function loadStatus() {
       const sb = el('start-btn'); if (sb) sb.style.display = 'none';
       const ab = el('abort-btn'); if (ab) ab.style.display = 'inline-block';
     } else {
-      badge.textContent = s.status || '—';
+      badge.textContent = s.status || '\u2014';
       badge.className = statusBadgeClass(s.status);
       const row = el('backup-running-row');
       if (row) row.style.display = 'none';
@@ -2029,7 +2029,7 @@ async function loadStatus() {
     const rec = el('recovery-status');
     const openBtn = el('recovery-open-btn');
     if (s.recovery_running) {
-      rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>läuft</span>';
+      rec.innerHTML = '<span class="badge badge-running"><span class="spinner"></span>l\u00e4uft</span>';
       const port = o.backuppc_port || 8080;
       openBtn.dataset.url = `http://${location.hostname}:${port}/BackupPC_Admin`;
       openBtn.style.display = 'inline-block';
@@ -2127,7 +2127,7 @@ function openRecoveryUI() {
   if (url) window.open(url, '_blank');
 }
 
-// ── PBS LXC Container Recovery ─────────────────────────────────────────────
+// \u2500\u2500 PBS LXC Container Recovery \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 let _pbsLxcSelected = null;
 let _pbsLxcPollTimer = null;
 
@@ -2164,7 +2164,7 @@ function selectPbsLxcDump(dump) {
   _pbsLxcSelected = dump;
   const form = document.getElementById('pbs-lxc-form');
   const label = document.getElementById('pbs-lxc-selected-label');
-  label.textContent = `Ausgewählt: ${dump.filename} (${dump.size_gb} GB, ${dump.date_str})`;
+  label.textContent = `Ausgew\u00e4hlt: ${dump.filename} (${dump.size_gb} GB, ${dump.date_str})`;
   // Vorbelegen mit Config-Werten / letzten Werten
   const nodeEl = document.getElementById('pbs-lxc-node');
   const vmidEl = document.getElementById('pbs-lxc-vmid');
@@ -2193,14 +2193,14 @@ async function startPbsLxcRestore() {
   const storage = document.getElementById('pbs-lxc-os-storage').value.trim();
   const dataset = document.getElementById('pbs-lxc-zfs-dataset').value.trim();
   const pbsPath = document.getElementById('pbs-lxc-hetzner-pbs').value.trim();
-  if (!node || !vmid || !storage || !dataset) { showMsg('Bitte alle Felder ausfüllen'); return; }
+  if (!node || !vmid || !storage || !dataset) { showMsg('Bitte alle Felder ausf\u00fcllen'); return; }
   // Letzte Werte merken
   _pbsLxcLastValues = { node, vmid, storage, dataset, pbsPath };
   try {
     localStorage.setItem('pbsLxcLastValues', JSON.stringify(_pbsLxcLastValues));
   } catch(e) {}
   closePbsLxcForm();
-  showMsg('Recovery wird gestartet…');
+  showMsg('Recovery wird gestartet\u2026');
   try {
     const resp = await fetch(base + '/api/recovery/pbs_lxc/start', {
       method: 'POST',
@@ -2233,7 +2233,7 @@ async function loadPbsLxcStatus(force) {
     const resetBtn = document.getElementById('pbs-lxc-reset-btn');
     if (d.status === 'idle') { statusEl.style.display = 'none'; return; }
     statusEl.style.display = '';
-    const icons = {running: '⏳', done: '✅', error: '❌'};
+    const icons = {running: '\u23f3', done: '\u2705', error: '\u274c'};
     titleEl.textContent = (icons[d.status] || '') + ' ' + (d.step || d.status);
     if (d.error) {
       msgEl.innerHTML = `<span style="color:red">${d.error}</span>`;
@@ -2277,7 +2277,7 @@ try {
 } catch(e) {}
 loadPbsLxcDumps(false);
 
-// ── BackupPC Docker Restore ─────────────────────────────────────────────────
+// \u2500\u2500 BackupPC Docker Restore \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 let _bppcPollTimer = null;
 
 async function loadBppcOptions() {
@@ -2294,7 +2294,7 @@ async function loadBppcOptions() {
     f('bppc-home-path',      'backuppc_home_path',      '/ZPool/Docker/backuppc/home');
     f('bppc-sshconfig-path', 'backuppc_sshconfig_path', '/ZPool/Docker/backuppc/ssh_config');
   } catch(e) { console.error('loadBppcOptions:', e); }
-  // Snapshots in Select befüllen
+  // Snapshots in Select bef\u00fcllen
   try {
     const d = await fetch(base + '/api/offsite_info').then(r => r.json());
     const sel = document.getElementById('bppc-snapshot');
@@ -2322,7 +2322,7 @@ async function startBppcRestore() {
   const offsite_snapshot = document.getElementById('bppc-snapshot').value;
   if (!container_name || !data_path) { showMsg('Bitte Container-Name und Daten-Pfad angeben'); return; }
   if (!confirm('BackupPC-Recovery jetzt starten?\n\nContainer wird gestoppt, Daten von Hetzner synchronisiert.')) return;
-  showMsg('Recovery wird gestartet…');
+  showMsg('Recovery wird gestartet\u2026');
   try {
     const resp = await fetch(base + '/api/backuppc_restore/start', {
       method: 'POST',
@@ -2351,7 +2351,7 @@ async function loadBppcStatus(force) {
     const resetBtn = document.getElementById('bppc-reset-btn');
     if (d.status === 'idle') { if (statusEl) statusEl.style.display = 'none'; return; }
     statusEl.style.display = '';
-    const icons = {running: '⏳', done: '✅', error: '❌'};
+    const icons = {running: '\u23f3', done: '\u2705', error: '\u274c'};
     titleEl.textContent = (icons[d.status] || '') + ' ' + (d.step || d.status);
     if (d.error) {
       msgEl.innerHTML = '<span style="color:red">' + d.error + '</span>';
