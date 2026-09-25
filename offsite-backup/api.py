@@ -1935,6 +1935,42 @@ DASHBOARD_HTML = """\
 <script>
 const base = "__INGRESS_PATH__";
 
+// ── Debug-Banner (v1.12.1) ─────────────────────────────────────────────────
+(function() {
+  function _showBanner(msg, color) {
+    var b = document.getElementById('_js_debug');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = '_js_debug';
+      b.style.cssText = 'position:fixed;bottom:0;left:0;right:0;padding:10px 14px;z-index:9999;font-size:13px;word-break:break-all;max-height:120px;overflow:auto;';
+      document.body.appendChild(b);
+    }
+    b.style.background = color || '#c00';
+    b.style.color = color ? '#000' : '#fff';
+    b.innerHTML += '<div>' + msg + '</div>';
+  }
+  window.onerror = function(msg, src, line, col, err) {
+    _showBanner('JS-Fehler Zeile ' + line + ': ' + msg, '#ffcccc');
+    return false;
+  };
+  window.addEventListener('unhandledrejection', function(e) {
+    var r = e.reason;
+    _showBanner('Promise-Fehler: ' + (r && r.message ? r.message : String(r)), '#ffe0b2');
+  });
+  // DOM-Selbsttest nach 2s
+  setTimeout(function() {
+    var ids = ['last-run','status-badge','offsite-disk','offsite-snaps','pbs-lxc-dumps-container','bppc-docker-host'];
+    var missing = ids.filter(function(id) { return !document.getElementById(id); });
+    if (missing.length) {
+      _showBanner('Fehlende DOM-IDs: ' + missing.join(', '), '#fff3cd');
+    }
+    if (document.getElementById('last-run') && document.getElementById('last-run').textContent === '\u2014') {
+      _showBanner('STATUS nicht geladen nach 2s — fetch-Basis: ' + base, '#ffcccc');
+    }
+  }, 2000);
+})();
+// ── Ende Debug-Banner ────────────────────────────────────────────────────────
+
 function showMsg(text, dur=3000) {
   const el = document.getElementById('msg');
   el.textContent = text;
