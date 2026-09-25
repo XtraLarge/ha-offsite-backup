@@ -10,6 +10,7 @@ OFFSITE_PATH="${OFFSITE_PATH:-/home}"
 OFFSITE_PORT="${OFFSITE_PORT:-23}"
 OFFSITE_BOX_ID="${OFFSITE_BOX_ID:?Offsite-Box-ID nicht gesetzt – wird von backup.sh übergeben}"
 OFFSITE_SNAPSHOT_KEEP="${OFFSITE_SNAPSHOT_KEEP:-20}"
+VZDUMP_KEEP="${VZDUMP_KEEP:-10}"
 USE_SSH_PASSWORD="${USE_SSH_PASSWORD:-0}"
 STATUS_INTERVAL=60
 RSYNC_MAX_RETRIES=5
@@ -413,6 +414,54 @@ create_storagebox_snapshot() {
     echo "$(date '+%F %T'): Snapshot-Antwort: $resp"
   fi
 }
+prune_vzdump_files() {
+  # Retention fuer vzdump-lxc-901-* Dateien auf Hetzner.
+  # VZDUMP_KEEP steuert die maximale Anzahl (default 10).
+  # Loescht aelteste Dateien via SFTP.
+  local keep="${VZDUMP_KEEP:-10}"
+  [[ "$keep" =~ ^[0-9]+$ ]] || { echo "$(date '+%F %T'): vzdump-Retention: ungueltiges keep=$keep - uebersprungen"; return 0; }
+  (( keep < 1 )) && { echo "$(date '+%F %T'): vzdump-Retention: keep<1 - uebersprungen"; return 0; }
+
+  local dump_dir="${OFFSITE_PATH}/ZPool/VMGuest/VMBackup/dump"
+  local ssh_e="ssh -p ${OFFSITE_PORT} -o BatchMode=yes -o StrictHostKeyChecking=no"
+
+  # Dateien auflisten (rsync --list-only), nur vzdump-lxc-901-*.tar.zst, nach Name sortiert (= chronologisch)
+  local files
+  files=$(rsync --list-only -e "$ssh_e" \
+    "${OFFSITE_USER}@${OFFSITE_HOST}:${dump_dir}/" 2>/dev/null \
+    | awk '{print $NF}' | grep '^vzdump-lxc-901-.*\.tar\.zst$' | sort)
+
+  local total
+  total=$(echo "$files" | grep -c . 2>/dev/null || echo 0)
+  [[ "$total" =~ ^[0-9]+$ ]] || total=0
+
+  if (( total <= keep )); then
+    echo "$(date '+%F %T'): vzdump-Retention: $total Dateien (keep=$keep) - nichts zu loeschen"
+    return 0
+  fi
+
+  local to_delete=$(( total - keep ))
+  echo "$(date '+%F %T'): vzdump-Retention: $total Dateien > keep=$keep - loesche $to_delete aelteste"
+
+  # Aelteste via SFTP loeschen
+  local sftp_cmds="" i=0
+  while IFS= read -r fname; do
+    (( i >= to_delete )) && break
+    [[ -z "$fname" ]] && continue
+    echo "$(date '+%F %T'): vzdump-Retention: loesche ${dump_dir}/${fname}"
+    sftp_cmds+="rm ${dump_dir}/${fname}"$'\n'
+    (( i++ ))
+  done <<< "$files"
+
+  if [[ -n "$sftp_cmds" ]]; then
+    printf '%s' "$sftp_cmds" | sftp -P "$OFFSITE_PORT" \
+      -o BatchMode=yes -o StrictHostKeyChecking=no \
+      "${OFFSITE_USER}@${OFFSITE_HOST}" >/dev/null 2>&1 \
+      && echo "$(date '+%F %T'): vzdump-Retention: fertig" \
+      || echo "$(date '+%F %T'): vzdump-Retention: SFTP-Fehler (nicht kritisch)"
+  fi
+}
+prune_vzdump_files
 create_storagebox_snapshot
 reset_ssh_master
 echo "$(date '+%F %T'): Fertig."

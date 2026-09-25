@@ -1225,7 +1225,7 @@ def _nas_ssh_long(remote_cmd, timeout=7200):
         return None
 
 def _do_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
-                         data_zfs_dataset, offsite_pbs_path):
+                         data_zfs_dataset, offsite_pbs_path, offsite_snapshot=""):
     """Background-Thread: PBS-Container vollständig wiederherstellen."""
     def step(n, msg):
         _pbs_lxc_log(f"[Schritt {n}/5] {msg}")
@@ -1239,10 +1239,15 @@ def _do_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
         nas_hetzner_key = opts.get("nas_hetzner_key", "/root/offsite-restore/id_ed25519_restore")
         vmid = int(target_vmid)
         tmp_dir = "/tmp/pbs-lxc-restore"
-        vzdump_remote_path = f"{offsite_base}/{opts.get('pbs_lxc_hetzner_dump_path', 'ZPool/VMGuest/VMBackup/dump')}/{vzdump_file}"
+        dump_path = opts.get('pbs_lxc_hetzner_dump_path', 'ZPool/VMGuest/VMBackup/dump')
+        if offsite_snapshot:
+            snap_base = f"{offsite_base}/.snapshots/{offsite_snapshot}"
+        else:
+            snap_base = offsite_base
+        vzdump_remote_path = f"{snap_base}/{dump_path}/{vzdump_file}"
         vzdump_local = f"{tmp_dir}/{vzdump_file}"
         data_mount = f"/{data_zfs_dataset}"
-        pbs_src = f"{offsite_base}/{offsite_pbs_path}/"
+        pbs_src = f"{snap_base}/{offsite_pbs_path}/"
         pbs_dst = f"{data_mount}/"
 
         # Schritt 1: vzdump von Hetzner → NAS
@@ -1331,7 +1336,7 @@ echo "start_done:$?"
         _pbs_lxc_status_write("error", "", "", str(e))
 
 def start_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
-                           data_zfs_dataset, offsite_pbs_path):
+                           data_zfs_dataset, offsite_pbs_path, offsite_snapshot=""):
     global _PBS_LXC_THREAD
     if _PBS_LXC_THREAD and _PBS_LXC_THREAD.is_alive():
         return False, "Restore läuft bereits"
@@ -1344,10 +1349,10 @@ def start_pbs_lxc_restore(vzdump_file, pve_node, target_vmid, os_storage,
     except Exception:
         pass
     _pbs_lxc_status_write("running", "Initialisierung", "Recovery wird gestartet...")
-    _pbs_lxc_log(f"Starte Recovery: {vzdump_file}, Node={pve_node}, VMID={target_vmid}, Storage={os_storage}, Dataset={data_zfs_dataset}")
+    _pbs_lxc_log(f"Starte Recovery: {vzdump_file}, Node={pve_node}, VMID={target_vmid}, Storage={os_storage}, Dataset={data_zfs_dataset}, Snapshot='{offsite_snapshot}'")
     _PBS_LXC_THREAD = threading.Thread(
         target=_do_pbs_lxc_restore,
-        args=(vzdump_file, pve_node, target_vmid, os_storage, data_zfs_dataset, offsite_pbs_path),
+        args=(vzdump_file, pve_node, target_vmid, os_storage, data_zfs_dataset, offsite_pbs_path, offsite_snapshot),
         daemon=True,
     )
     _PBS_LXC_THREAD.start()
@@ -1455,16 +1460,44 @@ echo "rsync_{idx}_ok"
                 raise RuntimeError(f"Schritt 2 rsync {idx}/4 fehlgeschlagen: {err}")
             _bppc_log(f"  rsync {idx}/4 OK")
 
-        # Schritt 3: Container neu starten (über NAS per pct exec)
-        step(3, f"Starte BackupPC-Container '{container_name}' neu ...")
+        # Schritt 3: Container starten oder neu anlegen
+        step(3, f"Starte/erstelle BackupPC-Container '{container_name}' ...")
         r = _nas_ssh_long(f"""
 set -e
-pct exec 900 -- docker start {container_name} 2>&1
-echo "start_done:$?"
-""", timeout=60)
+if pct exec 900 -- docker inspect {container_name} >/dev/null 2>&1; then
+  pct exec 900 -- docker start {container_name} 2>&1
+  echo "start_done:$?"
+else
+  echo "Container existiert nicht - lege neu an..."
+  # Image pruefen / pull / load
+  if ! pct exec 900 -- docker inspect --type=image adferrand/backuppc:4.4.0-9 >/dev/null 2>&1; then
+    echo "Image nicht lokal vorhanden - versuche pull..."
+    if ! pct exec 900 -- docker pull adferrand/backuppc:4.4.0-9 2>&1; then
+      echo "Pull fehlgeschlagen - lade aus lokalem Archiv..."
+      pct exec 900 -- docker load -i /ZPool/Docker/_DockerCreate/backuppc-image.tar.gz 2>&1
+    fi
+  fi
+  # Container anlegen und starten
+  pct exec 900 -- docker run -d \\
+    --name {container_name} \\
+    -h {container_name} \\
+    --restart=unless-stopped \\
+    -p 8080:8080 \\
+    --user=0:0 \\
+    -e "TZ=Europe/Berlin" \\
+    -e "SMTP_HOST=srv-smtp.fritz.box" \\
+    -e "SMTP_MAIL_DOMAIN=fritz.box" \\
+    -v "{config_path}:/etc/backuppc" \\
+    -v "{home_path}:/home/backuppc" \\
+    -v "{sshconfig_path}:/etc/ssh/ssh_config" \\
+    -v "{data_path}:/data/backuppc" \\
+    adferrand/backuppc:4.4.0-9 2>&1
+  echo "start_done:$?"
+fi
+""", timeout=300)
         out = (r.stdout or "") if r else ""
         if not r or "start_done:0" not in out:
-            _bppc_log(f"WARN: docker start Fehler (ggf. manuell starten): {out[-200:]}")
+            _bppc_log(f"WARN: docker start/run Fehler (ggf. manuell starten): {out[-200:]}")
         else:
             _bppc_log("Container gestartet.")
 
@@ -1821,6 +1854,13 @@ DASHBOARD_HTML = """\
       Schritte: vzdump laden &rarr; ZFS-Dataset &rarr; pct restore &rarr; PBS-Daten sync &rarr; start.
     </p>
 
+    <div style="margin-bottom:.7rem">
+      <label style="font-size:.85rem;color:#aaa">Hetzner-Snapshot als Quelle (leer = aktueller Stand)</label>
+      <select id="pbs-lxc-snap-src" style="width:100%;padding:.4rem .6rem;background:#2a2a2a;color:#e0e0e0;border:1px solid #444;border-radius:4px;margin-top:.25rem">
+        <option value="">-- aktueller Stand --</option>
+      </select>
+    </div>
+
     <!-- Schritt 1: vzdump auswählen -->
     <div id="pbs-lxc-dumps-container">
       <span style="color:#999;font-size:.88rem">Lade&#8230;</span>
@@ -2074,6 +2114,17 @@ async function loadOffsiteInfo(showFeedback) {
         tbl.appendChild(tr);
       });
     }
+    // PBS-LXC Snapshot-Quelle befuellen
+    const pbsSnapSel = document.getElementById('pbs-lxc-snap-src');
+    if (pbsSnapSel && d.snapshots && d.snapshots.length) {
+      while (pbsSnapSel.options.length > 1) pbsSnapSel.remove(1);
+      d.snapshots.forEach(function(s) {
+        const opt = document.createElement('option');
+        opt.value = s.name || s.description || '';
+        opt.textContent = (s.name || s.description || '') + (s.created ? ' (' + s.created.slice(0,10) + ')' : '');
+        pbsSnapSel.appendChild(opt);
+      });
+    }
     if (showFeedback) showMsg('Aktualisiert', 1500);
   } catch(e) { console.error('loadOffsiteInfo:', e); }
 }
@@ -2175,6 +2226,7 @@ async function startPbsLxcRestore() {
         pve_node: node, target_vmid: parseInt(vmid),
         os_storage: storage, data_zfs_dataset: dataset,
         offsite_pbs_path: pbsPath,
+        offsite_snapshot: (document.getElementById('pbs-lxc-snap-src') || {}).value || '',
       }),
     });
     const d = await resp.json();
@@ -2508,9 +2560,10 @@ class Handler(BaseHTTPRequestHandler):
                 _pbs_lxc_status_write("idle")
                 self._json({"ok": True, "message": "Reset"})
                 return
+            offsite_snapshot = body.get("offsite_snapshot", "")
             ok, msg = start_pbs_lxc_restore(
                 vzdump_file, pve_node, target_vmid, os_storage,
-                data_zfs_dataset, offsite_pbs_path)
+                data_zfs_dataset, offsite_pbs_path, offsite_snapshot)
             self._json({"ok": ok, "message": msg}, 200 if ok else 409)
         elif path == "/api/backuppc_restore/start":
             opts = read_options()
