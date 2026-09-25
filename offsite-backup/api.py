@@ -8,7 +8,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingMixIn
 import ssl
 import urllib.parse
 import urllib.request
@@ -2586,12 +2586,18 @@ class Handler(BaseHTTPRequestHandler):
         log.info("HTTP %s", fmt % args)
 
 
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Requests in separaten Threads — kein Blockieren bei SSH-Calls."""
+    daemon_threads = True
+
+
 if __name__ == "__main__":
     os.makedirs("/data/logs", exist_ok=True)
     if not os.environ.get("SUPERVISOR_TOKEN"):
         log.warning("SUPERVISOR_TOKEN nicht verfügbar — BackupPC-Steuerung deaktiviert")
     start_mqtt()
     threading.Thread(target=_nas_watch_loop, daemon=True).start()
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadedHTTPServer(("0.0.0.0", PORT), Handler)
     print(f"API läuft auf Port {PORT} (ingress: '{INGRESS_PATH}')", flush=True)
     server.serve_forever()
