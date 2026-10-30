@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.14.1 - 2026-10-30
+
+### Behoben (kritisch)
+- **Offsite-Snapshots entstanden seit 2026-09-24 nicht mehr.** In
+  `prune_vzdump_files()` (neu in 1.14.0) stand `(( i++ ))` als eigenstaendiges
+  Kommando. Die Post-Inkrement-Form liefert den ALTEN Wert als arithmetisches
+  Ergebnis; ist der 0, setzt bash den Exitstatus auf 1 — unter `set -e` beendet
+  das den gesamten Lauf, und zwar in der ERSTEN Schleifeniteration.
+  `backup_nas.sh` starb dadurch nach dem rsync, bevor
+  `create_storagebox_snapshot` lief. Die Daten wurden weiterhin synchronisiert,
+  aber es entstand fuenf Wochen lang kein neuer Wiederherstellungspunkt, und
+  die Snapshot-Retention lief ebenfalls nicht mehr. Der Lauf meldete nur ein
+  generisches `rc=1`. Korrektur: `i=$(( i + 1 ))`.
+
+### Haertung
+- **Reihenfolge nach Wichtigkeit.** `prune_vzdump_files` und
+  `prune_storagebox_snapshots` werden jetzt in `if !`-Bedingungen aufgerufen.
+  Damit setzt bash `set -e` fuer diese Funktionen aus: Aufraeumarbeiten koennen
+  den Offsite-Snapshot nicht mehr verhindern, sondern erzeugen nur noch eine
+  WARN-Zeile. Der Snapshot ist der eigentliche Wert des Laufs.
+- **Keine stillen API-Fehler mehr.** Neue Hilfsfunktion `hetzner_api()` prueft
+  den HTTP-Status jedes Storage-Box-Aufrufs. Bisher lieferte `curl -sS` auch
+  bei HTTP 401/403/500 den Exitcode 0 — ein abgelehnter Aufruf sah aus wie ein
+  leeres Ergebnis, und die Snapshot-Erstellung meldete faelschlich Erfolg.
+  401/403/409 und Netzwerkfehler werden jetzt benannt und fuehren zu rc=1.
+- **Erfolg wird nachgewiesen, nicht angenommen.** Liefert die API keine
+  Action-ID, zaehlt `create_storagebox_snapshot` die eigenen Snapshots vor und
+  nach dem Aufruf und meldet nur dann Erfolg, wenn die Zahl gestiegen ist.
+- **Kein unbegrenztes Warten.** Die Verfolgung der asynchronen Snapshot-Action
+  lief in `while true` ohne Abbruchkriterium und konnte unbegrenzt haengen.
+  Jetzt mit Obergrenze (1800 s), danach rc=1.
+- **Eindeutiger Abschluss.** `backup_nas.sh` endet mit explizitem
+  `exit $FINAL_RC` und meldet im Log "Fertig." bzw. "Fertig - MIT FEHLERN".
+
+### Tests
+- Neu: `tests/vzdump_retention_abort_test.sh` mit Positiv-, Kontroll-Negativ-
+  und Quellcode-Guard-Fall. Der Guard faengt jede eigenstaendige
+  `(( x++ ))`/`(( x-- ))`-Form in `backup_nas.sh` ab und haette 1.14.0 in der
+  CI blockiert. In `validate.yml` als Teil der Unit-Tests eingebunden.
+
 ## 1.8.0 - 2026-09-24
 
 ### Neu
