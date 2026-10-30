@@ -27,7 +27,7 @@ SELF='scripts/naming-guard.sh'
 # 1) Interne Netz-/Hostnamen: 10.<VLAN>.x.x (2. Oktett nonzero) + Exposed-Net
 #    10.0.<nonzero>.x + interne Domains. Generische RFC1918-Beispiele
 #    (192.168 / 172.16-31 / 10.0.0.x) bleiben bewusst UNERFASST.
-NET_PATTERN='10\.[1-9][0-9]?\.[0-9]{1,3}\.[0-9]{1,3}|10\.0\.[1-9][0-9]{0,2}\.[0-9]{1,3}|fritz\.box|derwerres\.de'
+NET_PATTERN='10\.[1-9][0-9]?\.[0-9]{1,3}\.[0-9]{1,3}|10\.0\.[1-9][0-9]{0,2}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|u[0-9]{5,}\.your-storagebox\.de|u[0-9]{5,}@|fritz\.box|derwerres\.de'
 
 # 2) Klartext-Secret-Zuweisung mit Literalwert (>=12 Zeichen). Nur '='-Zuweisung
 #    (YAML-Schema 'key: type' bleibt aussen vor). Variablen-/Env-Refs ausgenommen.

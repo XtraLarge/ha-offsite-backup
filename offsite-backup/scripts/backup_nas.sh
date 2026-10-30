@@ -386,33 +386,95 @@ prune_storagebox_snapshots() {
   echo "$(date '+%F %T'): Retention: Warten auf Loeschung ueberschritten – fahre fort"
 }
 
+# Ruft die Hetzner-Storage-Box-API auf und legt den HTTP-Status in HTTP_CODE ab.
+# Grund: "curl -sS" liefert auch bei HTTP 401/403/500 den Exitcode 0. Ohne
+# Statuspruefung sah ein abgelehnter Aufruf wie ein leeres Ergebnis aus — die
+# Snapshot-Erstellung meldete dann faelschlich Erfolg.
+# Aufruf: hetzner_api <METHODE> <PFAD-SUFFIX> [JSON-BODY]
+hetzner_api() {
+  local method="$1" suffix="$2" body="${3:-}"
+  local url="https://api.hetzner.com/v1/storage_boxes${suffix}"
+  local out
+  if [[ -n "$body" ]]; then
+    out="$(curl -sS -X "$method" \
+      -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
+      -H "Content-Type: application/json" \
+      -d "$body" -w $'\n%{http_code}' "$url" || true)"
+  else
+    out="$(curl -sS -X "$method" \
+      -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
+      -w $'\n%{http_code}' "$url" || true)"
+  fi
+  HTTP_CODE="${out##*$'\n'}"
+  [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE="000"
+  printf '%s' "${out%$'\n'*}"
+}
+
+# Zaehlt die eigenen Snapshots (Beschreibung "Snap_...") auf der Box.
+# Gibt die Zahl auf stdout aus, oder "-1", wenn die API nicht sauber antwortet.
+count_own_snapshots() {
+  local body
+  body="$(hetzner_api GET "/$OFFSITE_BOX_ID/snapshots")"
+  if [[ "$HTTP_CODE" != "200" ]]; then
+    echo "-1"; return 0
+  fi
+  jq -r '[.snapshots[]? | select(.description // "" | startswith("Snap_"))] | length' \
+    <<<"$body" 2>/dev/null || echo "-1"
+}
+
 create_storagebox_snapshot() {
   local desc; desc="Snap_$(date +%F)"
   echo "$(date '+%F %T'): Erstelle Offsite Snapshot: $desc"
-  prune_storagebox_snapshots
-  local resp
-  resp="$(curl -sS -X POST \
-    -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
-    -H "Content-Type: application/json" \
-    -d "{\"description\":\"$desc\"}" \
-    "https://api.hetzner.com/v1/storage_boxes/$OFFSITE_BOX_ID/snapshots")"
-  local action_id
-  action_id="$(jq -r '.action.id // empty' <<<"$resp")"
-  if [[ -n "$action_id" ]]; then
-    while true; do
-      local a status prog
-      a="$(curl -sS -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
-          "https://api.hetzner.com/v1/storage_boxes/actions/$action_id")"
-      status="$(jq -r '.action.status' <<<"$a")"
-      prog="$(jq -r '.action.progress // 0' <<<"$a")"
-      echo "$(date '+%F %T'): Snapshot-Status: $status (${prog}%)"
-      [[ "$status" == "success" ]] && { echo "$(date '+%F %T'): Offsite Snapshot erstellt."; break; }
-      [[ "$status" == "error" ]] && { echo "$(date '+%F %T'): Snapshot fehlgeschlagen"; return 1; }
-      sleep 5
-    done
-  else
-    echo "$(date '+%F %T'): Snapshot-Antwort: $resp"
+
+  # Retention ist Hausmeisterei und darf die Erstellung nicht verhindern.
+  if ! prune_storagebox_snapshots; then
+    echo "$(date '+%F %T'): WARN: Snapshot-Retention fehlgeschlagen - erstelle trotzdem"
   fi
+
+  local before; before="$(count_own_snapshots)"
+
+  local resp
+  resp="$(hetzner_api POST "/$OFFSITE_BOX_ID/snapshots" "{\"description\":\"$desc\"}")"
+  case "$HTTP_CODE" in
+    200|201|202) : ;;
+    401|403) echo "$(date '+%F %T'): FEHLER: Snapshot abgelehnt - API-Token ungueltig oder ohne Recht (HTTP $HTTP_CODE)"; return 1 ;;
+    409)     echo "$(date '+%F %T'): FEHLER: Snapshot abgelehnt - Limit erreicht oder Box belegt (HTTP 409): $resp"; return 1 ;;
+    000)     echo "$(date '+%F %T'): FEHLER: Snapshot-Aufruf ohne Antwort (Netzwerk/DNS)"; return 1 ;;
+    *)       echo "$(date '+%F %T'): FEHLER: Snapshot-Aufruf HTTP $HTTP_CODE: $resp"; return 1 ;;
+  esac
+
+  local action_id
+  action_id="$(jq -r '.action.id // empty' <<<"$resp" 2>/dev/null || true)"
+
+  if [[ -n "$action_id" ]]; then
+    # Asynchrone Action verfolgen - MIT Obergrenze. Ohne sie haengt der Lauf
+    # unbegrenzt, wenn die Action nie einen Endzustand meldet.
+    local waited=0 max_wait=1800 a status prog
+    while (( waited < max_wait )); do
+      a="$(hetzner_api GET "/actions/$action_id")"
+      if [[ "$HTTP_CODE" != "200" ]]; then
+        echo "$(date '+%F %T'): WARN: Action-Status nicht abrufbar (HTTP $HTTP_CODE) - erneuter Versuch"
+      else
+        status="$(jq -r '.action.status // empty' <<<"$a" 2>/dev/null || true)"
+        prog="$(jq -r '.action.progress // 0' <<<"$a" 2>/dev/null || echo 0)"
+        echo "$(date '+%F %T'): Snapshot-Status: ${status:-unbekannt} (${prog}%)"
+        [[ "$status" == "success" ]] && { echo "$(date '+%F %T'): Offsite Snapshot erstellt."; return 0; }
+        [[ "$status" == "error" ]] && { echo "$(date '+%F %T'): FEHLER: Snapshot-Action fehlgeschlagen: $a"; return 1; }
+      fi
+      sleep 5; waited=$(( waited + 5 ))
+    done
+    echo "$(date '+%F %T'): FEHLER: Snapshot-Action $action_id ohne Endzustand nach ${max_wait}s"
+    return 1
+  fi
+
+  # Keine Action-ID: nicht blind als Erfolg werten, sondern nachzaehlen.
+  local after; after="$(count_own_snapshots)"
+  if [[ "$before" =~ ^[0-9]+$ ]] && [[ "$after" =~ ^[0-9]+$ ]] && (( after > before )); then
+    echo "$(date '+%F %T'): Offsite Snapshot erstellt (ohne Action-ID, per Nachzaehlung bestaetigt: $before -> $after)."
+    return 0
+  fi
+  echo "$(date '+%F %T'): FEHLER: Snapshot nicht nachweisbar angelegt (vorher=$before nachher=$after). Antwort: $resp"
+  return 1
 }
 prune_vzdump_files() {
   # Retention fuer vzdump-lxc-901-* Dateien auf Hetzner.
@@ -450,7 +512,7 @@ prune_vzdump_files() {
     [[ -z "$fname" ]] && continue
     echo "$(date '+%F %T'): vzdump-Retention: loesche ${dump_dir}/${fname}"
     sftp_cmds+="rm ${dump_dir}/${fname}"$'\n'
-    (( i++ ))
+    i=$(( i + 1 ))   # NICHT (( i++ )): liefert bei i==0 rc=1 -> set -e bricht ab
   done <<< "$files"
 
   if [[ -n "$sftp_cmds" ]]; then
@@ -461,7 +523,29 @@ prune_vzdump_files() {
       || echo "$(date '+%F %T'): vzdump-Retention: SFTP-Fehler (nicht kritisch)"
   fi
 }
-prune_vzdump_files
-create_storagebox_snapshot
+# --- Abschluss -------------------------------------------------------------
+# Reihenfolge nach Wichtigkeit: Der Offsite-Snapshot ist der eigentliche Wert
+# dieses Laufs (er ist der Wiederherstellungspunkt). Aufraeumarbeiten duerfen
+# ihn nicht verhindern - genau das ist zwischen 2026-09-25 und 2026-10-30
+# passiert, als die vzdump-Retention den Lauf vorzeitig beendete.
+# Der Aufruf in einer if-Bedingung setzt set -e fuer die Funktion aus, sodass
+# ein Fehler darin den Lauf nicht mehr abbricht.
+FINAL_RC=0
+
+if ! prune_vzdump_files; then
+  echo "$(date '+%F %T'): WARN: vzdump-Retention fehlgeschlagen - Lauf wird fortgesetzt"
+fi
+
+if ! create_storagebox_snapshot; then
+  echo "$(date '+%F %T'): FEHLER: Offsite-Snapshot wurde NICHT erstellt"
+  FINAL_RC=1
+fi
+
 reset_ssh_master
-echo "$(date '+%F %T'): Fertig."
+
+if (( FINAL_RC == 0 )); then
+  echo "$(date '+%F %T'): Fertig."
+else
+  echo "$(date '+%F %T'): Fertig - MIT FEHLERN (rc=$FINAL_RC)"
+fi
+exit "$FINAL_RC"

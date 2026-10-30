@@ -199,6 +199,32 @@ Vielen Dank für eure Arbeit – sie wird hier täglich produktiv eingesetzt und
 - [Offsite Backup – DOCS.md](offsite-backup/DOCS.md) – Konfiguration, Dashboard, Backup-Ablauf, Troubleshooting
 - [BackupPC Recovery – DOCS.md](backuppc-recovery/DOCS.md) – Recovery-Umgebung, Startvorgang, technische Details
 
+
+## Entwicklung
+
+Dieses Repository ist **öffentlich**. Interne Adressen, Hostnamen und Secrets
+gehören deshalb nicht in getrackte Dateien — Standardwerte sind leer oder
+generische Platzhalter, die echten Werte stehen ausschließlich in den
+Add-on-Optionen bzw. Umgebungsvariablen der jeweiligen Installation.
+
+Dafür gibt es `scripts/naming-guard.sh`. Er läuft in der CI — und damit erst
+**nach** dem Push, wenn die Daten bereits auf GitHub stehen. Um das zu
+verhindern, gibt es denselben Guard als Pre-Commit-Hook:
+
+```bash
+bash scripts/install-git-hooks.sh   # einmalig pro Arbeitskopie
+```
+
+Danach blockiert jeder Commit, der interne Werte einführen würde, mit einer
+Meldung samt Fundstellen. Jederzeit selbst prüfen:
+
+```bash
+bash scripts/naming-guard.sh
+```
+
+Bewusste Ausnahmen: Zeilen-Marker `naming-guard:allow` oder ein Regex in
+`.naming-guard-allow` (dort bitte nur nachweisliche Platzhalter, mit
+Begründung als Kommentar).
 ## Lizenz
 
 MIT – siehe Add-on-Labels. BackupPC und das adferrand-Image stehen unter ihren jeweiligen eigenen Lizenzen.
