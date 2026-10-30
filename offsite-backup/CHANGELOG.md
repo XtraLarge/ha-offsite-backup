@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.14.3 - 2026-10-30
+
+### Behoben (kritisch) - Regression aus 1.14.1
+- **`hetzner_api()` gab HTTP_CODE in einer Subshell zurueck.** Die Funktion
+  setzte `HTTP_CODE` und schrieb den Body auf stdout, wurde aber in einer
+  Command Substitution aufgerufen (`body="$(hetzner_api GET ...)"`). Die
+  laeuft in einer Subshell: die Zuweisung war im Aufrufer nie sichtbar, und
+  unter `set -u` brach der folgende Lesezugriff den Lauf ab:
+
+      backup_nas.sh: Zeile 418: HTTP_CODE ist nicht gesetzt.
+      backup_nas.sh: Zeile 438: HTTP_CODE ist nicht gesetzt.
+      Bootstrap beendet (rc=1)
+
+  Der Abbruch kam **nach** dem erfolgreichen POST, der Offsite-Snapshot
+  entstand also - der Lauf meldete trotzdem `rc=1`, und die Abschlussschritte
+  (`reset_ssh_master`, sauberer Exit-Code) liefen nicht mehr.
+
+  Korrektur: `hetzner_api()` gibt nichts mehr auf stdout aus, sondern setzt die
+  globalen Variablen `HTTP_CODE` und `HTTP_BODY`. Alle drei Aufrufstellen rufen
+  sie jetzt direkt auf, ohne `$( )`. Beide Variablen werden am Skriptanfang
+  initialisiert, damit ein Lesezugriff unter `set -u` nie abbricht.
+
+### Bestaetigt
+Der Lauf vom 2026-10-30 belegt, dass die Korrekturen aus 1.14.1 greifen:
+- Die vzdump-Retention lief **vollstaendig** durch (5 Dateien geloescht statt
+  Abbruch nach der ersten).
+- Die Snapshot-Retention lief durch: 7 eigene Snapshots auf `keep=5` reduziert.
+- `Snap_2026-10-30` wurde erstellt - der erste neue Wiederherstellungspunkt
+  seit dem 2026-09-24.
+
+### Tests
+- Neu: `tests/subshell_httpcode_test.sh` mit Positiv-, Kontroll-Negativ-,
+  Quellcode- und Init-Guard. Er faengt jeden `hetzner_api`-Aufruf in einer
+  Command Substitution sowie fehlende Vorinitialisierung ab und haette 1.14.1
+  in der CI blockiert (3 Fundstellen). In `validate.yml` eingebunden.
+
 ## 1.14.2 - 2026-10-30
 
 ### Sicherheit / Oeffentliches Repo
