@@ -107,3 +107,4 @@ jobs:
           bash tests/rsync_chmod_test.sh
           bash tests/status_source_test.sh
           bash tests/vzdump_retention_abort_test.sh
+          bash tests/subshell_httpcode_test.sh
