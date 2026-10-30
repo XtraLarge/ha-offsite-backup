@@ -1414,6 +1414,17 @@ def _do_bppc_restore(docker_host, container_name, data_path, config_path,
         offsite_base  = opts.get("offsite_path", "/home")
         nas_key       = opts.get("nas_hetzner_key", "/root/offsite-restore/id_ed25519_restore")
 
+        # SMTP des BackupPC-Containers: kommt aus den Optionen. Frueher standen
+        # hier feste interne Hostnamen - die gehoeren nicht in ein oeffentliches
+        # Repo. Ist nichts gesetzt, werden die -e Flags einfach weggelassen.
+        _smtp_host   = str(opts.get("backuppc_smtp_host", "") or "").strip()
+        _smtp_domain = str(opts.get("backuppc_smtp_domain", "") or "").strip()
+        smtp_env = ""
+        if _smtp_host:
+            smtp_env += '\n    -e "SMTP_HOST=' + _smtp_host + '" \\'
+        if _smtp_domain:
+            smtp_env += '\n    -e "SMTP_MAIL_DOMAIN=' + _smtp_domain + '" \\'
+
         # Snapshot-Präfix für Pfade
         if offsite_snapshot:
             snap_prefix = f"{offsite_base}/.snapshots/{offsite_snapshot}"
@@ -1487,9 +1498,7 @@ else
     --restart=unless-stopped \\
     -p 8080:8080 \\
     --user=0:0 \\
-    -e "TZ=Europe/Berlin" \\
-    -e "SMTP_HOST=srv-smtp.fritz.box" \\
-    -e "SMTP_MAIL_DOMAIN=fritz.box" \\
+    -e "TZ=Europe/Berlin" \\{smtp_env}
     -v "{config_path}:/etc/backuppc" \\
     -v "{home_path}:/home/backuppc" \\
     -v "{sshconfig_path}:/etc/ssh/ssh_config" \\
@@ -1929,7 +1938,7 @@ DASHBOARD_HTML = """\
     <!-- Konfigurationsfelder -->
     <div id="bppc-form-fields" style="margin-top:.6rem;padding:.75rem;background:#f9f9f9;border-radius:6px;display:grid;gap:.4rem">
       <div class="row"><span class="label">Docker-Host</span>
-        <input id="bppc-docker-host" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="10.10.11.0">
+        <input id="bppc-docker-host" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="z. B. 192.0.2.10">
       </div>
       <div class="row"><span class="label">Container-Name</span>
         <input id="bppc-container-name" type="text" style="border:1px solid #ddd;border-radius:4px;padding:.3rem .5rem;font-size:.88rem;flex:1" placeholder="backuppc">
@@ -2307,7 +2316,7 @@ async function loadBppcOptions() {
       const el = document.getElementById(id);
       if (el && !el.value) el.value = opts[key] || def;
     };
-    f('bppc-docker-host',    'backuppc_docker_host',    '10.10.11.0');
+    f('bppc-docker-host',    'backuppc_docker_host',    '');
     f('bppc-container-name', 'backuppc_container_name', 'backuppc');
     f('bppc-data-path',      'backuppc_data_path',      '/ZPool/BackupPC');
     f('bppc-config-path',    'backuppc_config_path',    '/ZPool/Docker/backuppc/config');
@@ -2571,7 +2580,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": ok, "message": msg}, 200 if ok else 409)
         elif path == "/api/backuppc_restore/start":
             opts = read_options()
-            docker_host    = body.get("docker_host",    opts.get("backuppc_docker_host", "10.10.11.0"))
+            docker_host    = body.get("docker_host",    opts.get("backuppc_docker_host", ""))
             container_name = body.get("container_name", opts.get("backuppc_container_name", "backuppc"))
             data_path      = body.get("data_path",      opts.get("backuppc_data_path", "/ZPool/BackupPC"))
             config_path    = body.get("config_path",    opts.get("backuppc_config_path", "/ZPool/Docker/backuppc/config"))
