@@ -1159,8 +1159,10 @@ def get_pbs_lxc_restore_status():
         # Log-Tail anhängen
         try:
             with open(PBS_LXC_LOG_FILE) as f:
-                lines = f.readlines()
-            st["log_tail"] = "".join(lines[-30:])
+                # bounded tail statt Vollladung: haelt nur die letzten 30
+                # Zeilen im RAM, egal wie gross die Datei ist
+                lines = list(deque(f, maxlen=30))
+            st["log_tail"] = "".join(lines)
         except Exception:
             st["log_tail"] = ""
         return st
@@ -1389,8 +1391,9 @@ def get_bppc_restore_status():
             st = json.load(f)
         try:
             with open(BPPC_LOG_FILE) as f:
-                lines = f.readlines()
-            st["log_tail"] = "".join(lines[-30:])
+                # bounded tail statt Vollladung: siehe read_log()
+                lines = list(deque(f, maxlen=30))
+            st["log_tail"] = "".join(lines)
         except Exception:
             st["log_tail"] = ""
         return st
@@ -2498,8 +2501,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/backuppc_restore/log":
             try:
                 with open(BPPC_LOG_FILE) as f:
-                    lines = f.readlines()
-                self._json({"lines": lines[-100:]})
+                    # bounded tail statt Vollladung: siehe read_log()
+                    lines = list(deque(f, maxlen=100))
+                self._json({"lines": lines})
             except Exception:
                 self._json({"lines": []})
         else:
