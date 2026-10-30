@@ -1,0 +1,11 @@
+# .naming-guard-allow
+# Regexe (ERE), eine pro Zeile. Treffer darauf gelten NICHT als Leak.
+# Nur fuer nachweisliche Platzhalter - echte Werte gehoeren hier NICHT hinein.
+#
+# Doku-Platzhalter fuer eine Hetzner Storage Box. Die Nummer 123456 ist
+# erfunden und wird durchgaengig in README/DOCS als Beispiel verwendet.
+u123456(\.your-storagebox\.de)?
+#
+# Beispiel-IP in der MQTT-Doku der Recovery-Add-ons (RFC1918-Beispielwert,
+# nicht aus unserem Netz).
+192\.168\.1\.10
