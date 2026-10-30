@@ -14,12 +14,12 @@
 #               Exit 0 = grün, 1 = rot.
 #
 # Voraussetzungen --live:
-#   SSH-Zugang von Manage zu hassio (10.10.6.43, Port 22)
+#   SSH-Zugang von Manage zu die hassio-Instanz (HASSIO_HOST, Port 22)
 #   hassio hat SUPERVISOR_TOKEN im SSH-Addon-Container
-#   Netzwerk-Zugang von Manage zu u527284.your-storagebox.de:23
+#   Netzwerk-Zugang von Manage zu <box>.your-storagebox.de:23
 #
 # Env-Overrides (--live):
-#   HASSIO_HOST          hassio-IP (default: 10.10.6.43)
+#   HASSIO_HOST          hassio-IP/Name (Pflicht fuer --live, kein Default)
 #   HETZNER_BOX_SSH      user@host (default: aus Supervisor API)
 #   HETZNER_BOX_PORT     SSH-Port  (default: 23)
 #   PBS_REMOTE_PATH      Datastore-Root (default: /home/ZPool/PBS/NAS)
@@ -34,7 +34,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SMOKE_PY="$SCRIPT_DIR/smoke.py"
-HASSIO_HOST="${HASSIO_HOST:-10.10.6.43}"
+# Bewusst ohne Default: eine echte Host-Adresse gehoert nicht ins oeffentliche Repo.
+HASSIO_HOST="${HASSIO_HOST:-}"
+if [[ "${1:-}" == "--live" && -z "$HASSIO_HOST" ]]; then
+  echo "FEHLER: HASSIO_HOST nicht gesetzt (IP/Name der hassio-Instanz) - fuer --live noetig." >&2
+  exit 2
+fi
 
 MODE="${1:-}"
 if [[ "$MODE" != "--staging" && "$MODE" != "--live" ]]; then

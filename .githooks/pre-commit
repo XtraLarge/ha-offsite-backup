@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Pre-Commit-Hook: blockiert Commits mit internen Namen/Adressen oder
+# Klartext-Secrets in getrackten Dateien.
+#
+# Aktivieren (einmalig pro Arbeitskopie):
+#     bash scripts/install-git-hooks.sh
+#
+# Warum: Dieses Repo ist OEFFENTLICH. Ohne Hook faellt ein Leak erst in der CI
+# auf - also nach dem Push, wenn die Daten bereits auf GitHub stehen. Dort
+# bekommt man sie nur noch mit History-Rewrite weg, und veroeffentlicht bleiben
+# sie trotzdem. Der Hook verschiebt die Pruefung an die einzige Stelle, an der
+# sie noch folgenlos ist: vor den Commit.
+set -uo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+guard="$repo_root/scripts/naming-guard.sh"
+
+# Guard nicht vorhanden (alter Branch, Teil-Checkout) -> nicht blockieren.
+[[ -f "$guard" ]] || exit 0
+
+if bash "$guard"; then
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+
+========================================================================
+  COMMIT BLOCKIERT - Leak-Guard hat angeschlagen
+========================================================================
+  Dieses Repo ist OEFFENTLICH. Die Fundstellen stehen oben.
+
+  Was tun (in dieser Reihenfolge):
+    1. Echten Wert durch Platzhalter ersetzen und den echten Wert ueber
+       eine Add-on-Option oder Env-Variable setzen. Bevorzugt - so bleibt
+       er dauerhaft aus dem Repo heraus.
+    2. Bewusste Einzelausnahme: Zeilen-Marker  naming-guard:allow
+    3. Bewusste Regelausnahme:  Regex in .naming-guard-allow
+
+  Jederzeit selbst pruefen:  bash scripts/naming-guard.sh
+
+  Umgehen nur im Notfall:    git commit --no-verify
+  Dann schlaegt die CI zu - und beim Push ist es bereits oeffentlich.
+========================================================================
+
+MSG
+exit 1
