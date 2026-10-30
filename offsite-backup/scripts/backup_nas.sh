@@ -11,6 +11,11 @@ OFFSITE_PORT="${OFFSITE_PORT:-23}"
 OFFSITE_BOX_ID="${OFFSITE_BOX_ID:?Offsite-Box-ID nicht gesetzt – wird von backup.sh übergeben}"
 OFFSITE_SNAPSHOT_KEEP="${OFFSITE_SNAPSHOT_KEEP:-20}"
 VZDUMP_KEEP="${VZDUMP_KEEP:-10}"
+
+# Rueckgabekanal von hetzner_api(). Vorinitialisiert, damit ein Lesezugriff
+# unter "set -u" auch dann nicht abbricht, wenn die Funktion nie lief.
+HTTP_CODE="000"
+HTTP_BODY=""
 USE_SSH_PASSWORD="${USE_SSH_PASSWORD:-0}"
 STATUS_INTERVAL=60
 RSYNC_MAX_RETRIES=5
@@ -386,20 +391,30 @@ prune_storagebox_snapshots() {
   echo "$(date '+%F %T'): Retention: Warten auf Loeschung ueberschritten – fahre fort"
 }
 
-# Ruft die Hetzner-Storage-Box-API auf und legt den HTTP-Status in HTTP_CODE ab.
-# Grund: "curl -sS" liefert auch bei HTTP 401/403/500 den Exitcode 0. Ohne
-# Statuspruefung sah ein abgelehnter Aufruf wie ein leeres Ergebnis aus — die
-# Snapshot-Erstellung meldete dann faelschlich Erfolg.
+# Ruft die Hetzner-Storage-Box-API auf und legt Status und Antwort in den
+# GLOBALEN Variablen HTTP_CODE und HTTP_BODY ab.
+#
+# Grund fuer die Statuspruefung: "curl -sS" liefert auch bei HTTP 401/403/500
+# den Exitcode 0. Ohne Pruefung sieht ein abgelehnter Aufruf wie ein leeres
+# Ergebnis aus, und die Snapshot-Erstellung meldet faelschlich Erfolg.
+#
+# WICHTIG - nicht in eine Command Substitution setzen:
+#     body="$(hetzner_api GET ...)"      # FALSCH
+# Das laeuft in einer Subshell; HTTP_CODE waere dort gesetzt und im Aufrufer
+# unsichtbar, was unter "set -u" den Lauf abbricht (Vorfall 2026-10-30).
+# Richtig ist:
+#     hetzner_api GET "/pfad"            # danach $HTTP_CODE und $HTTP_BODY lesen
+#
 # Aufruf: hetzner_api <METHODE> <PFAD-SUFFIX> [JSON-BODY]
 hetzner_api() {
-  local method="$1" suffix="$2" body="${3:-}"
+  local method="$1" suffix="$2" reqbody="${3:-}"
   local url="https://api.hetzner.com/v1/storage_boxes${suffix}"
   local out
-  if [[ -n "$body" ]]; then
+  if [[ -n "$reqbody" ]]; then
     out="$(curl -sS -X "$method" \
       -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
       -H "Content-Type: application/json" \
-      -d "$body" -w $'\n%{http_code}' "$url" || true)"
+      -d "$reqbody" -w $'\n%{http_code}' "$url" || true)"
   else
     out="$(curl -sS -X "$method" \
       -H "Authorization: Bearer $OFFSITE_TOKEN_LOCAL" \
@@ -407,19 +422,22 @@ hetzner_api() {
   fi
   HTTP_CODE="${out##*$'\n'}"
   [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE="000"
-  printf '%s' "${out%$'\n'*}"
+  HTTP_BODY="${out%$'\n'*}"
+  [[ "$HTTP_CODE" == "000" ]] && HTTP_BODY=""
+  return 0
 }
 
 # Zaehlt die eigenen Snapshots (Beschreibung "Snap_...") auf der Box.
 # Gibt die Zahl auf stdout aus, oder "-1", wenn die API nicht sauber antwortet.
 count_own_snapshots() {
-  local body
-  body="$(hetzner_api GET "/$OFFSITE_BOX_ID/snapshots")"
+  # hetzner_api direkt aufrufen, NICHT in $( ) - sonst gehen HTTP_CODE und
+  # HTTP_BODY in der Subshell verloren.
+  hetzner_api GET "/$OFFSITE_BOX_ID/snapshots"
   if [[ "$HTTP_CODE" != "200" ]]; then
     echo "-1"; return 0
   fi
   jq -r '[.snapshots[]? | select(.description // "" | startswith("Snap_"))] | length' \
-    <<<"$body" 2>/dev/null || echo "-1"
+    <<<"$HTTP_BODY" 2>/dev/null || echo "-1"
 }
 
 create_storagebox_snapshot() {
@@ -433,8 +451,8 @@ create_storagebox_snapshot() {
 
   local before; before="$(count_own_snapshots)"
 
-  local resp
-  resp="$(hetzner_api POST "/$OFFSITE_BOX_ID/snapshots" "{\"description\":\"$desc\"}")"
+  hetzner_api POST "/$OFFSITE_BOX_ID/snapshots" "{\"description\":\"$desc\"}"
+  local resp="$HTTP_BODY"
   case "$HTTP_CODE" in
     200|201|202) : ;;
     401|403) echo "$(date '+%F %T'): FEHLER: Snapshot abgelehnt - API-Token ungueltig oder ohne Recht (HTTP $HTTP_CODE)"; return 1 ;;
@@ -451,7 +469,8 @@ create_storagebox_snapshot() {
     # unbegrenzt, wenn die Action nie einen Endzustand meldet.
     local waited=0 max_wait=1800 a status prog
     while (( waited < max_wait )); do
-      a="$(hetzner_api GET "/actions/$action_id")"
+      hetzner_api GET "/actions/$action_id"
+      a="$HTTP_BODY"
       if [[ "$HTTP_CODE" != "200" ]]; then
         echo "$(date '+%F %T'): WARN: Action-Status nicht abrufbar (HTTP $HTTP_CODE) - erneuter Versuch"
       else
