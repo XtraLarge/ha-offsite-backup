@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.14.2 - 2026-10-30
+
+### Sicherheit / Oeffentliches Repo
+- **Interne Adressen aus getrackten Dateien entfernt.** Das Repository ist
+  oeffentlich; Standardwerte sind jetzt leer oder generische Platzhalter, die
+  echten Werte stehen ausschliesslich in den Add-on-Optionen der jeweiligen
+  Installation. Betroffen: `pbs_server_host`, `backuppc_docker_host`,
+  `pve_host` (Defaults in `config.yaml`), die zugehoerigen Fallbacks und der
+  UI-Platzhalter in `api.py` sowie `tests/pbs-recovery/run_all.sh` und
+  `smoke.py`. In bestehenden Installationen sind diese Optionen explizit
+  gesetzt — die Umstellung aendert dort nichts.
+- **SMTP des BackupPC-Containers ist konfigurierbar.** `SMTP_HOST` und
+  `SMTP_MAIL_DOMAIN` waren im docker-run-Template hartkodiert. Neue optionale
+  Optionen `backuppc_smtp_host` / `backuppc_smtp_domain`; sind sie leer,
+  entfallen die `-e` Flags. Absichtlich keine Platzhalter: die haetten den
+  Mailversand eines neu angelegten Containers still kaputtgemacht.
+- **Leak-Guard erweitert.** `scripts/naming-guard.sh` erkennt jetzt zusaetzlich
+  Hetzner-Storage-Box-Accounts (`u<nummer>.your-storagebox.de`, `u<nummer>@`)
+  sowie die privaten Netze 192.168.0.0/16 und 172.16.0.0/12. Die Erweiterung <!-- naming-guard:allow: CIDR-Notation der Bereiche, keine echte Adresse -->
+  hat sofort einen echten Account in `tests/pbs-recovery/smoke.py` gefunden,
+  den das bisherige Muster nicht sah.
+- **Neu: `.naming-guard-allow`** fuer nachweisliche Platzhalter in der
+  Dokumentation (`u123456...`, `192.168.1.10`), jeweils mit Begruendung.
+
+### Entwicklung
+- **Neu: Pre-Commit-Hook** (`.githooks/pre-commit`), aktiviert mit
+  `bash scripts/install-git-hooks.sh`. Er laesst denselben Leak-Guard vor jedem
+  Commit laufen und blockiert mit Fundstellen und Handlungsanweisung.
+  Hintergrund: Bisher schlug der Guard erst in der CI an — also nach dem Push,
+  wenn die Daten bereits oeffentlich sind. Dort bekommt man sie nur noch per
+  History-Rewrite weg, und veroeffentlicht bleiben sie trotzdem.
+- README.de.md: Abschnitt "Entwicklung" mit dem Grundsatz (echte Werte nur in
+  Optionen/Env), der Hook-Installation und den beiden Ausnahme-Mechanismen.
+
 ## 1.14.1 - 2026-10-30
 
 ### Behoben (kritisch)

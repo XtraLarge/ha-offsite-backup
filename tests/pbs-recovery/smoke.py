@@ -22,7 +22,7 @@ ENV (STAGING):
 
 ENV (LIVE):
   HETZNER_BOX_KEY_B64  base64-enkodierter SSH-Private-Key (von hassio Supervisor API)
-  HETZNER_BOX_SSH      user@host (z.B. u527284@u527284.your-storagebox.de)
+  HETZNER_BOX_SSH      user@host (z.B. u123456@u123456.your-storagebox.de)
   HETZNER_BOX_PORT     SSH-Port (default: 23)
   PBS_REMOTE_PATH      Datastore-Root auf Box (default: /home/ZPool/PBS/NAS)
   PBS_NS               PBS-Namespace (default: ct903-host)
