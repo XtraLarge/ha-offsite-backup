@@ -9,3 +9,10 @@ u123456(\.your-storagebox\.de)?
 # Beispiel-IP in der MQTT-Doku der Recovery-Add-ons (RFC1918-Beispielwert,
 # nicht aus unserem Netz).
 192\.168\.1\.10
+#
+# Testdaten des Index-vs-Working-Tree-Regressionstests. 10.24.3.4 stammt aus
+# dem Codex-Review zu PR #10 und ist ein erfundener Wert - er gehoert zu keinem
+# Netz dieser Umgebung. Der Test BRAUCHT einen Wert, den der Guard erkennt,
+# sonst beweist er nichts. Bewusst eng gefasst: nur dieses Literal in dieser
+# einen Datei, damit ein echter Leak dort weiter auffaellt.
+^tests/naming_guard_staged_test\.sh:[0-9]+:.*10\.24\.3\.4

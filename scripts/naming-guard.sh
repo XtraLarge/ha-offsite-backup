@@ -19,10 +19,42 @@
 #              (matcht gegen 'datei:zeile:inhalt'); '#'-Kommentare/Leerzeilen erlaubt.
 set -euo pipefail
 
-cd -- "$(git rev-parse --show-toplevel)"
+# Modus: --staged prueft den INDEX (genau das, was committed wird), sonst den
+# Working Tree. Der Pre-Commit-Hook braucht --staged: eine Datei kann gestaged
+# und danach im Working Tree gesaeubert werden, ohne erneut gestaged zu werden -
+# dann geht die sensible Version trotzdem in den Commit (Codex-Review PR #10).
+SCAN_MODE='worktree'
+if [[ "${1:-}" == '--staged' ]]; then
+  SCAN_MODE='staged'
+elif [[ -n "${1:-}" ]]; then
+  echo "naming-guard: unbekannte Option '$1' (erlaubt: --staged)" >&2
+  exit 2
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd -- "$REPO_ROOT"
 
 ALLOW_FILE='.naming-guard-allow'
 SELF='scripts/naming-guard.sh'
+
+if [[ "$SCAN_MODE" == 'staged' ]]; then
+  # Index in ein tmpfs-/tmp-Verzeichnis materialisieren und DORT pruefen.
+  # checkout-index schreibt jeden Index-Eintrag mit seinem gestageten Inhalt,
+  # inklusive .naming-guard-allow - eine nur im Working Tree erweiterte
+  # Ausnahme greift damit nicht.
+  SCAN_DIR="$(mktemp -d)"
+  trap 'rm -rf -- "$SCAN_DIR"' EXIT
+  git checkout-index --all --prefix="$SCAN_DIR/" 2>/dev/null || {
+    echo "naming-guard: Index konnte nicht materialisiert werden" >&2
+    exit 2
+  }
+  cd -- "$SCAN_DIR"
+  # Pfade relativ und NUL-getrennt ausgeben, damit Allowlist und
+  # Selbstausschluss unveraendert auf 'datei:zeile:inhalt' matchen.
+  list_files() { find . -type f -print0 | sed -z 's|^\./||'; }
+else
+  list_files() { git ls-files -z; }
+fi
 
 # 1) Interne Netz-/Hostnamen: 10.<VLAN>.x.x (2. Oktett nonzero) + Exposed-Net
 #    10.0.<nonzero>.x + interne Domains. Generische RFC1918-Beispiele
@@ -48,8 +80,8 @@ common_filter() {
     | allow_filter
 }
 
-net_hits="$(git ls-files -z | xargs -0 grep -HnIE "$NET_PATTERN" -- 2>/dev/null | common_filter || true)"
-secret_hits="$(git ls-files -z | xargs -0 grep -HnIE "$SECRET_PATTERN" -- 2>/dev/null | grep -vE "$SECRET_EXCLUDE" | common_filter || true)"
+net_hits="$(list_files | xargs -0 grep -HnIE "$NET_PATTERN" -- 2>/dev/null | common_filter || true)"
+secret_hits="$(list_files | xargs -0 grep -HnIE "$SECRET_PATTERN" -- 2>/dev/null | grep -vE "$SECRET_EXCLUDE" | common_filter || true)"
 
 # 3) ECHTE private Keys: PEM-Header + realer base64-Body (>=40 Zeichen, ohne "...")
 #    NACH dem Header, im selben File. Doku-Platzhalter (Body mit "..." oder <40)
@@ -61,7 +93,7 @@ key_hits="$(
       have_hdr && $0 !~ /\.\.\./ && $0 ~ /^[[:space:]]*[A-Za-z0-9+\/]{40,}={0,2}[[:space:]]*$/ { body=1 }
       END { if (have_hdr && body) printf "%s:%d:%s\n", F, hdr, hdrline }
     ' "$f" 2>/dev/null
-  done < <(git ls-files -z) | common_filter || true
+  done < <(list_files) | common_filter || true
 )"
 
 hits=""
@@ -83,4 +115,8 @@ if [[ -n "$hits" ]]; then
   exit 1
 fi
 
-echo "naming-guard: ok — keine internen Netz-/Hostnamen, Keys oder Klartext-Secrets in getrackten Dateien."
+if [[ "$SCAN_MODE" == 'staged' ]]; then
+  echo "naming-guard: ok (gestageter Stand) — keine internen Netz-/Hostnamen, Keys oder Klartext-Secrets."
+else
+  echo "naming-guard: ok — keine internen Netz-/Hostnamen, Keys oder Klartext-Secrets in getrackten Dateien."
+fi
