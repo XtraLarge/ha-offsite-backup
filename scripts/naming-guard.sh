@@ -44,7 +44,11 @@ if [[ "$SCAN_MODE" == 'staged' ]]; then
   # Ausnahme greift damit nicht.
   SCAN_DIR="$(mktemp -d)"
   trap 'rm -rf -- "$SCAN_DIR"' EXIT
-  git checkout-index --all --prefix="$SCAN_DIR/" 2>/dev/null || {
+  # --ignore-skip-worktree-bits ist Pflicht: ohne sie laesst checkout-index
+  # Eintraege mit gesetztem skip-worktree-Bit still weg, obwohl ihr Inhalt im
+  # Commit landet. Ein "git update-index --skip-worktree <datei>" wuerde den
+  # Guard sonst blind machen (Codex-Review PR #12).
+  git checkout-index --ignore-skip-worktree-bits --all --prefix="$SCAN_DIR/" 2>/dev/null || {
     echo "naming-guard: Index konnte nicht materialisiert werden" >&2
     exit 2
   }

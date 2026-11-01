@@ -19,6 +19,7 @@
 #   1. POSITIV:          --staged findet den Leak im Index trotz sauberem Working Tree
 #   2. KONTROLL-NEGATIV: der Default-Modus findet ihn NICHT (Test trifft das Fehlerbild)
 #   3. ALLOWLIST:        ein nur im Working Tree ergaenzter Allow-Eintrag greift nicht
+#   3b. SKIP-WORKTREE:   Eintraege mit skip-worktree-Bit werden mitgeprueft
 #   4. HOOK-GUARD:       .githooks/pre-commit ruft den Guard mit --staged auf
 #   5. QUELLCODE-GUARD:  keine Lesestelle greift direkt auf den Working Tree zu
 #
@@ -97,6 +98,28 @@ if [[ "$rc_allow_unstaged" == "1" && "$rc_allow_staged" == "0" ]]; then
 else
   echo "FAIL [allowlist]        ungestaged rc=$rc_allow_unstaged (erwartet 1), gestaged rc=$rc_allow_staged (erwartet 0)"
   [[ "$rc_allow_unstaged" == "0" ]] && echo "     Eine nur lokal ergaenzte Ausnahme haebelt den staged-Modus aus."
+  fails=$(( fails + 1 ))
+fi
+
+# --- 3b. SKIP-WORKTREE -------------------------------------------------------
+# git checkout-index laesst Eintraege mit gesetztem skip-worktree-Bit still weg,
+# obwohl ihr Inhalt im Commit landet. Ohne --ignore-skip-worktree-bits macht ein
+# einzelnes "git update-index --skip-worktree <datei>" den Guard blind
+# (Codex-Review PR #12).
+printf 'host=10.24.3.4\n' > "$SANDBOX/skip.txt"
+git -C "$SANDBOX" add skip.txt
+git -C "$SANDBOX" update-index --skip-worktree skip.txt
+rc_skip="$(run_guard --staged)"
+git -C "$SANDBOX" update-index --no-skip-worktree skip.txt
+git -C "$SANDBOX" rm -q --cached skip.txt
+rm -f "$SANDBOX/skip.txt"
+
+if [[ "$rc_skip" == "1" ]]; then
+  echo "OK   [skip-worktree]    Eintraege mit skip-worktree-Bit werden mitgeprueft"
+else
+  echo "FAIL [skip-worktree]    --staged lieferte rc=$rc_skip, erwartet 1"
+  echo "     checkout-index braucht --ignore-skip-worktree-bits - sonst macht ein"
+  echo "     einzelnes 'git update-index --skip-worktree <datei>' den Guard blind."
   fails=$(( fails + 1 ))
 fi
 
