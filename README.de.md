@@ -216,11 +216,25 @@ bash scripts/install-git-hooks.sh   # einmalig pro Arbeitskopie
 ```
 
 Danach blockiert jeder Commit, der interne Werte einführen würde, mit einer
-Meldung samt Fundstellen. Jederzeit selbst prüfen:
+Meldung samt Fundstellen.
+
+Der Guard kennt zwei Modi:
 
 ```bash
-bash scripts/naming-guard.sh
+bash scripts/naming-guard.sh             # Working Tree — was auf der Platte liegt
+bash scripts/naming-guard.sh --staged    # Index — was wirklich committed wird
 ```
+
+Der Hook nutzt `--staged`, und das ist kein Detail: eine Datei kann mit einem
+internen Wert gestaged und danach im Working Tree gesäubert werden, ohne erneut
+gestaged zu werden. Ein Guard, der den Working Tree liest, sieht dann die
+saubere Fassung und lässt die sensible durch — bei einem öffentlichen Repo ist
+der Wert nach dem Push draußen, und ein History-Rewrite holt ihn nicht wieder
+zurück. `--staged` materialisiert den Index mit `git checkout-index` und prüft
+dort, inklusive der gestageten `.naming-guard-allow`: eine nur lokal ergänzte
+Ausnahme greift also nicht.
+
+Abgesichert durch `tests/naming_guard_staged_test.sh` (läuft in der CI).
 
 Bewusste Ausnahmen: Zeilen-Marker `naming-guard:allow` oder ein Regex in
 `.naming-guard-allow` (dort bitte nur nachweisliche Platzhalter, mit

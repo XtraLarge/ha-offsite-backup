@@ -18,7 +18,8 @@ guard="$repo_root/scripts/naming-guard.sh"
 # Guard nicht vorhanden (alter Branch, Teil-Checkout) -> nicht blockieren.
 [[ -f "$guard" ]] || exit 0
 
-if bash "$guard"; then
+# --staged: pruefen, was WIRKLICH committed wird (siehe Guard-Kopf).
+if bash "$guard" --staged; then
   exit 0
 fi
 
@@ -36,7 +37,8 @@ cat >&2 <<'MSG'
     2. Bewusste Einzelausnahme: Zeilen-Marker  naming-guard:allow
     3. Bewusste Regelausnahme:  Regex in .naming-guard-allow
 
-  Jederzeit selbst pruefen:  bash scripts/naming-guard.sh
+  Jederzeit selbst pruefen:  bash scripts/naming-guard.sh           (Working Tree)
+                             bash scripts/naming-guard.sh --staged  (was committed wird)
 
   Umgehen nur im Notfall:    git commit --no-verify
   Dann schlaegt die CI zu - und beim Push ist es bereits oeffentlich.
