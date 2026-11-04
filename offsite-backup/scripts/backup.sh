@@ -114,7 +114,9 @@ if ! command -v screen >/dev/null 2>&1; then
 fi
 
 sessions="\$(screen -ls 2>/dev/null || true)"
-if printf '%s' "\$sessions" | grep -q "\$SCREEN_NAME"; then
+# Bash-Mustervergleich statt "printf | grep -q": unter pipefail kann grep -q
+# die Pipe vor printf schliessen (SIGPIPE) und das if faelschlich verneinen.
+if [[ "\$sessions" == *"\$SCREEN_NAME"* ]]; then
   echo "__ALREADY_RUNNING__"
   exit 0
 fi
@@ -150,7 +152,7 @@ export OFFSITE_SNAPSHOT_KEEP='${OFFSITE_SNAPSHOT_KEEP}'
 screen -dmS "\$SCREEN_NAME" bash "\$RUNDIR/nas_bootstrap.sh"
 sleep 1
 sessions="\$(screen -ls 2>/dev/null || true)"
-if printf '%s' "\$sessions" | grep -q "\$SCREEN_NAME"; then
+if [[ "\$sessions" == *"\$SCREEN_NAME"* ]]; then
   echo "__STARTED__"
 else
   echo "__START_FAILED__"

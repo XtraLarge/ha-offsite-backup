@@ -26,7 +26,12 @@ chown -R 1000:1000 /home/backuppc /data/backuppc /var/log/lighttpd 2>/dev/null |
 # configure.pl installiert BackupPC nach /usr/local/BackupPC.
 if [[ -f /firstrun ]]; then
   echo "Führe BackupPC configure.pl durch (Ersteinrichtung — läuft nur einmal)..."
-  BACKUPPC_TAR=$(ls /root/BackupPC-*.tar.gz 2>/dev/null | head -1)
+  # Glob statt "ls | head": unter pipefail kann head die Pipe vorzeitig
+  # schliessen (SIGPIPE, rc=141) und set -e bricht den Start ab.
+  shopt -s nullglob
+  backuppc_tars=(/root/BackupPC-*.tar.gz)
+  shopt -u nullglob
+  BACKUPPC_TAR="${backuppc_tars[0]:-}"
   if [[ -z "$BACKUPPC_TAR" ]]; then
     echo "FEHLER: BackupPC-Quellpaket /root/BackupPC-*.tar.gz nicht gefunden" >&2
     exit 1
@@ -102,7 +107,9 @@ fi
 # printf '%b\n' konvertiert \n-Literale in echte Newlines (HA-UI speichert Keys einzeilig)
 printf '%b\n' "$(jq -r '.ssh_key_offsite' "$CONFIG")" > "$OFFSITE_KEY"
 chmod 600 "$OFFSITE_KEY"
-if ! head -1 "$OFFSITE_KEY" | grep -q 'BEGIN'; then
+key_first_line=""
+IFS= read -r key_first_line < "$OFFSITE_KEY" || true
+if [[ "$key_first_line" != *BEGIN* ]]; then
   echo "FEHLER: SSH-Key-Datei ungültig (kein PEM-Header)" >&2
   exit 1
 fi
@@ -134,7 +141,16 @@ fi
 DATASTAND="unbekannt"
 PC_DIR="${TOPDIR_PATH}/pc"
 if [[ -d "$PC_DIR" ]]; then
-  NEWEST_HOST=$(ls -dt "$PC_DIR"/*/ 2>/dev/null | head -1)
+  # Juengstes Host-Verzeichnis ohne "ls -dt | head -1": head schliesst die
+  # Pipe nach der ersten Zeile, ls bekommt SIGPIPE, unter pipefail wird die
+  # Zuweisung rc=141 und set -e beendet das Add-on (Vorfall 2026-10-31).
+  NEWEST_HOST=""
+  for host_dir in "$PC_DIR"/*/; do
+    [[ -d "$host_dir" ]] || continue
+    if [[ -z "$NEWEST_HOST" || "$host_dir" -nt "$NEWEST_HOST" ]]; then
+      NEWEST_HOST="$host_dir"
+    fi
+  done
   if [[ -n "$NEWEST_HOST" ]]; then
     DATASTAND=$(date -r "$NEWEST_HOST" '+%d.%m.%Y %H:%M' 2>/dev/null || echo "unbekannt")
   fi

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.14.4 - 2026-11-04
+
+### Behoben
+- **Screen-Session-Pruefung auf der NAS war unter pipefail nicht
+  deterministisch.** Der Launcher (`backup.sh`, remote unter
+  `set -euo pipefail`) pruefte laufende Sessions mit `printf … | grep -q`.
+  `grep -q` beendet sich beim ersten Treffer; schreibt `printf` dann noch,
+  wird die Pipeline durch SIGPIPE zu rc=141 und das `if` faelschlich
+  verneint (Session laeuft, gemeldet wird `__START_FAILED__` bzw. ein
+  Doppelstart). Jetzt Bash-Mustervergleich ohne Pipe. Gleiche Fehlerklasse
+  wie der Startabbruch in BackupPC Recovery 2.2.2; abgedeckt durch
+  `tests/pipefail_sigpipe_test.sh`.
+
 ## 1.14.3 - 2026-10-30
 
 ### Behoben (kritisch) - Regression aus 1.14.1
