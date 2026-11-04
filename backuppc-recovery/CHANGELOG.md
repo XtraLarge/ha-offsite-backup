@@ -1,3 +1,16 @@
+## 2.2.2
+
+- **Start brach sporadisch mit Exit-Code 141 ab (SIGPIPE).** `run.sh` laeuft
+  unter `set -euo pipefail` und ermittelte das juengste Host-Verzeichnis mit
+  `ls -dt … | head -1`. `head` schliesst die Pipe nach der ersten Zeile; schreibt
+  `ls` noch weiter, bekommt es SIGPIPE, der Pipeline-Status wird 141 und `set -e`
+  beendet das Add-on direkt nach dem SSHFS-Mount (Vorfall 2026-10-31 nach einem
+  Reboot). Jetzt per Schleife mit `-nt` ohne Pipe. Gleiche Fehlerklasse ebenfalls
+  behoben: Suche nach dem BackupPC-Quellpaket (Glob statt `ls | head`) und
+  PEM-Header-Pruefung des Offsite-Keys (`read` statt `head | grep -q`).
+- Regressionstest `tests/pipefail_sigpipe_test.sh` (positiv, Kontroll-Negativ
+  mit Abbruchnachweis, Quellcode-Guard) laeuft in der CI.
+
 ## 2.2.1
 
 - **Recovery-Smoke: drei E2E-Korrekturen (an echten Offsite-Daten gefunden).**

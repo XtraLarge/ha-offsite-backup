@@ -110,3 +110,4 @@ jobs:
           bash tests/status_source_test.sh
           bash tests/vzdump_retention_abort_test.sh
           bash tests/subshell_httpcode_test.sh
+          bash tests/pipefail_sigpipe_test.sh
