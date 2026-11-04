@@ -9,7 +9,7 @@
   behoben: Suche nach dem BackupPC-Quellpaket (Glob statt `ls | head`) und
   PEM-Header-Pruefung des Offsite-Keys (`read` statt `head | grep -q`).
 - Regressionstest `tests/pipefail_sigpipe_test.sh` (positiv, Kontroll-Negativ
-  mit rc=141, Quellcode-Guard) laeuft in der CI.
+  mit Abbruchnachweis, Quellcode-Guard) laeuft in der CI.
 
 ## 2.2.1
 

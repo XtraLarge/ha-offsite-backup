@@ -21,7 +21,8 @@
 # DIESER TEST PRUEFT
 #   1. POSITIV:          die neue Schleife findet das juengste Verzeichnis,
 #                        auch bei tausenden Eintraegen, ohne Abbruch
-#   2. KONTROLL-NEGATIV: die alte Form bricht bei grosser Ausgabe mit 141 ab
+#   2. KONTROLL-NEGATIV: die alte Form bricht bei grosser Ausgabe ab (141,
+#                        bzw. 2 wenn SIGPIPE in der Umgebung ignoriert ist)
 #                        (beweist, dass der Test das Fehlerbild abdeckt)
 #   3. QUELLCODE-GUARD:  keine vorzeitig endenden Leser in den betroffenen
 #                        pipefail-Skripten
@@ -74,10 +75,13 @@ PC_DIR="$PC_DIR" bash -c '
   NEWEST_HOST=$(ls -dt "$PC_DIR"/*/ 2>/dev/null | head -1)
   echo "$NEWEST_HOST" >/dev/null
 ' 2>/dev/null || rc=$?
-if [[ "$rc" == "141" ]]; then
-  echo "OK   2 kontroll-negativ: alte Form bricht mit rc=141 ab"
+# rc=141, wenn SIGPIPE normal zustellt wird (HA-Container). Ist SIGPIPE in der
+# Umgebung ignoriert (z. B. GitHub-Runner), endet ls mit EPIPE und rc=2.
+# Entscheidend ist: die alte Form bricht unter set -e ab.
+if [[ "$rc" != "0" ]]; then
+  echo "OK   2 kontroll-negativ: alte Form bricht ab (rc=$rc)"
 else
-  echo "FAIL 2 kontroll-negativ: alte Form lieferte rc=$rc statt 141"
+  echo "FAIL 2 kontroll-negativ: alte Form lief ohne Abbruch durch (rc=0)"
   fails=$((fails + 1))
 fi
 
